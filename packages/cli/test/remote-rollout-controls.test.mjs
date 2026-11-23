@@ -211,11 +211,7 @@ test('generated rollout recovery uses the authenticated proxy and persists verif
       verifyRecovery: (_actor, _scope, state, reference) => verified && state.phase === 'uncertain' && reference === 'case-42'
     });
     registerRemoteRolloutEvidenceCapability(registry, rollout, { ...base, candidate: candidate('evidence'), cursorKey: randomBytes(32), authorizeEvidence: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('demo-app', dir);

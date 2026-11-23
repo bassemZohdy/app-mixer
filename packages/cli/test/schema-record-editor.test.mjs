@@ -353,11 +353,7 @@ test('record browser optionally selects record ID order and fences stale pages',
       authorize: () => true,
       authorizeItem: (actor, item) => item.value.owner === actor.principalId
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, request) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -530,11 +526,7 @@ test('record browser field presence filters use the authorized capability servic
       authorize: () => true,
       authorizeItem: (actor, item) => item.value.owner === actor.principalId
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, request) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -774,11 +766,7 @@ test('record browser any-condition mode uses the authorized capability service',
       authorize: () => true,
       authorizeItem: (actor, item) => item.value.owner === actor.principalId
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, request) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -6086,11 +6074,7 @@ test('local references can select schemas inside arrays through the capability s
       ['put', 'PUT']
     ])
       registerDataCapability(registry, provider, { ...common, operation, ...(operation === 'put' ? { jsonSchema } : {}), candidate: { operationId: `items.${operation}`, method, path: '/items' } });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, request) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -6578,11 +6562,7 @@ test('tuple forms save typed trailing items through the capability service', asy
       ['put', 'PUT']
     ])
       registerDataCapability(registry, provider, { ...common, operation, ...(operation === 'put' ? { jsonSchema } : {}), candidate: { operationId: `items.${operation}`, method, path: '/items' } });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, options) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -6899,11 +6879,7 @@ test('multi-filter editor browses authorized records through the capability serv
       authorize: () => true,
       authorizeItem: (actor, item) => actor.principalId === item.value.owner
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, options) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -6983,11 +6959,7 @@ test('record editor supports host-approved numeric ranges with bounded results',
       authorize: () => true,
       authorizeItem: (actor, item) => actor.principalId === item.value.owner
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const calls = [];
     globalThis.fetch = (url, options) => {
@@ -7280,11 +7252,7 @@ test('record editor supports host-approved text prefixes and switches comparison
       authorize: () => true,
       authorizeItem: (actor, item) => actor.principalId === item.value.owner
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const calls = [];
     globalThis.fetch = (url, options) => {
@@ -7491,11 +7459,7 @@ test('record browser not-equal filtering uses the authorized capability service'
       authorize: () => true,
       authorizeItem: (actor, item) => item.value.owner === actor.principalId
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, request) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {

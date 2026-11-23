@@ -80,7 +80,7 @@ for (const [name, create] of Object.entries(stores)) {
 
   test(`FEAT-026: an unknown page or component returns 400 and leaves the draft unchanged (${name})`, async () => {
     const store = create(),
-      control = createControlPlane(store, developer);
+      control = createControlPlane({ repository: store, token: developer });
     try {
       const url = await start(control);
       const send = async patches => {
@@ -140,7 +140,7 @@ test('FEAT-026: the store refuses setComponentProps without a props object', () 
 
 test('FEAT-026: a proposal carrying the repair patches previews and approves', async () => {
   const repo = new ApplicationStore(initial());
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);

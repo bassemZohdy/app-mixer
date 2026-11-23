@@ -33,11 +33,7 @@ test('memory erasure view reviews a lost response through the authenticated prox
     await memory.put(actor, other, 'other', 'keep', options);
     registerAgentMemoryScopeErase(registry, { memory, scope, operationId: 'erase', path: '/erase', authorize: () => true, authorizeErase: () => true });
     registerAgentMemoryErasureEvidence(registry, { memory, scope, operationId: 'evidence', path: '/evidence', authorize: () => true, authorizeEvidence: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('memory-erase', dir);

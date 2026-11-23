@@ -120,8 +120,8 @@ test('control planes export and import an authenticated package between environm
   source.publish(0);
   const target = new ApplicationStore(initial),
     token = 'a-strong-local-token-at-least-32-characters',
-    a = createControlPlane(source, token),
-    b = createControlPlane(target, token),
+    a = createControlPlane({ repository: source, token: token }),
+    b = createControlPlane({ repository: target, token: token }),
     data = createDataPlane(target);
   for (const s of [a, b, data]) s.listen(0, '127.0.0.1');
   await Promise.all([a, b, data].map(s => once(s, 'listening')));
@@ -189,7 +189,7 @@ test('target control plane enforces signed promotion and preserves optimistic co
     verify = createSignedPromotionVerifier([{ sourceEnvironment: 'development', keyId: 'key-1', publicKey }], 'production'),
     signed = signPromotionPackage(pkg, 'production', 'key-1', privateKey),
     token = 'strong-token-at-least-thirty-two-characters',
-    server = createControlPlane(target, token, undefined, undefined, undefined, { verify });
+    server = createControlPlane({ repository: target, token: token, promotionPolicy: { verify } });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const url = `http://127.0.0.1:${server.address().port}/promotion/import`,
@@ -221,7 +221,7 @@ test('verified promotion retains signed evidence atomically across SQLite restar
   try {
     target = new SqliteApplicationStore(path, initial);
     const token = 'strong-token-at-least-thirty-two-characters';
-    server = createControlPlane(target, token, undefined, undefined, undefined, { verifyWithEvidence: verify.verifyWithEvidence });
+    server = createControlPlane({ repository: target, token: token, promotionPolicy: { verifyWithEvidence: verify.verifyWithEvidence } });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}/promotion/import`,
@@ -282,7 +282,7 @@ test('verified promotion retains evidence in memory and requires repository supp
   const unsupported = new ApplicationStore(initial);
   unsupported.promoteVerified = undefined;
   const token = 'strong-token-at-least-thirty-two-characters',
-    server = createControlPlane(unsupported, token, undefined, undefined, undefined, { verifyWithEvidence: verify.verifyWithEvidence });
+    server = createControlPlane({ repository: unsupported, token: token, promotionPolicy: { verifyWithEvidence: verify.verifyWithEvidence } });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
@@ -312,7 +312,7 @@ test('version-bound signatures reject replay, version tampering, and legacy enve
   try {
     target = new SqliteApplicationStore(path, initial);
     const token = 'strong-token-at-least-thirty-two-characters';
-    server = createControlPlane(target, token, undefined, undefined, undefined, { verifyWithEvidence: verify.verifyWithEvidence });
+    server = createControlPlane({ repository: target, token: token, promotionPolicy: { verifyWithEvidence: verify.verifyWithEvidence } });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}/promotion/import`,

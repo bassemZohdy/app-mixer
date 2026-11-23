@@ -107,11 +107,7 @@ test('extension policy timeout returns HTTP 503 without invoking the implementat
   let release;
   const gate = new Promise(resolve => (release = resolve)),
     { runtime, calls } = policyFixture({ authorize: () => true, authorizeExtension: () => gate, policyTimeoutMs: 100, maxPendingPolicies: 1 }),
-    server = createCapabilityServer(
-      runtime.capabilities,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: runtime.capabilities, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`, {
@@ -235,11 +231,7 @@ test('extension validation timeout returns HTTP 503 without invoking the impleme
   let release;
   const gate = new Promise(resolve => (release = resolve)),
     { runtime, calls } = policyFixture({ authorize: () => true, validate: () => gate, validationTimeoutMs: 100, maxPendingValidations: 1 }),
-    server = createCapabilityServer(
-      runtime.capabilities,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: runtime.capabilities, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/lookup/invoke`, {

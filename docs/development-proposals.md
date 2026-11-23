@@ -8,7 +8,7 @@ This is an in-memory foundation, not an approval security boundary. Proposals an
 
 ## Separate local endpoints
 
-`createDevelopmentPlanes(repository, developerToken, agentToken)` requires distinct tokens and returns `proposal` and `control` HTTP servers. Bind both to loopback and give the agent only the proposal token. The proposal server permits `POST /proposals` with `{ "baseRevision": 0, "patches": [...] }`; it cannot approve, modify drafts, or publish. The developer control server permits `GET /proposals` to list the stored proposals as `{ "proposals": [{ "id", "baseRevision", "status" }] }` (a proposal moves to the end of the list when it is approved or rejected; the patches and preview stay behind `GET /proposals/:id`), `GET /proposals/:id` to inspect the preview and `POST /proposals/:id/approve` or `/reject`. The proposal server has no list, so the agent token cannot enumerate proposals. Approval changes the draft only; `POST /publish` remains a separate developer action. Tokens are a local guard, not production authorization. Proposals are in memory and are lost on restart; after 100 stored proposals the service rejects new ones until restarted.
+`createDevelopmentPlanes({ repository, developerToken, agentToken })` requires distinct tokens and returns `proposal` and `control` HTTP servers. Bind both to loopback and give the agent only the proposal token. The proposal server permits `POST /proposals` with `{ "baseRevision": 0, "patches": [...] }`; it cannot approve, modify drafts, or publish. The developer control server permits `GET /proposals` to list the stored proposals as `{ "proposals": [{ "id", "baseRevision", "status" }] }` (a proposal moves to the end of the list when it is approved or rejected; the patches and preview stay behind `GET /proposals/:id`), `GET /proposals/:id` to inspect the preview and `POST /proposals/:id/approve` or `/reject`. The proposal server has no list, so the agent token cannot enumerate proposals. Approval changes the draft only; `POST /publish` remains a separate developer action. Tokens are a local guard, not production authorization. Proposals are in memory and are lost on restart; after 100 stored proposals the service rejects new ones until restarted.
 
 ## Development Agent
 
@@ -26,8 +26,8 @@ import { createDevelopmentPlanes } from '@app-mixer/core';
 import { DevelopmentAgent, createProposalClient } from '@app-mixer/agent';
 // repository and model are configured by the host; tokens come from a secret mechanism.
 const agent = new DevelopmentAgent(model, createProposalClient('http://127.0.0.1:3004/proposals', agentToken));
-const planes = createDevelopmentPlanes(repository, developerToken, agentToken,
-  (instruction, draft) => agent.propose(instruction, draft));
+const planes = createDevelopmentPlanes({ repository, developerToken, agentToken,
+  develop: (instruction, draft) => agent.propose(instruction, draft) });
 planes.control.listen(3001, '127.0.0.1');
 planes.proposal.listen(3004, '127.0.0.1');
 ```

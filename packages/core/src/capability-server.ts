@@ -122,26 +122,30 @@ function createCapabilityHandler(
   };
 }
 
+/** Options for the host-authenticated capability endpoint; unknown keys are refused. */
+export type CapabilityServerOptions = {
+  registry: CapabilityRegistry;
+  authenticate: Authenticate;
+  auditFailure: AuditFailure;
+  tracing?: CapabilityServerTracingOptions;
+  limits?: CapabilityServerLimits;
+};
+const CAPABILITY_SERVER_KEYS = ['registry', 'authenticate', 'auditFailure', 'tracing', 'limits'];
 /** Host-authenticated HTTP endpoint for local use or a trusted TLS-terminating proxy. */
-export function createCapabilityServer(
-  registry: CapabilityRegistry,
-  authenticate: Authenticate,
-  auditFailure: AuditFailure,
-  tracing?: CapabilityServerTracingOptions,
-  limits?: CapabilityServerLimits
-): Server {
+export function createCapabilityServer(options: CapabilityServerOptions): Server {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !CAPABILITY_SERVER_KEYS.includes(key))) throw Error('Invalid capability server options');
+  const { registry, authenticate, auditFailure, tracing, limits } = options;
   return limitServer(createServer(createCapabilityHandler(registry, authenticate, auditFailure, tracing, limits)));
 }
 
+/** Options for the direct-TLS capability endpoint; unknown keys are refused (the TLS material has its own check). */
+export type CapabilityHttpsServerOptions = CapabilityServerOptions & { tls: CapabilityHttpsOptions };
+const CAPABILITY_HTTPS_SERVER_KEYS = [...CAPABILITY_SERVER_KEYS, 'tls'];
 /** Direct TLS transport; optional client CA requires a verified client certificate. */
-export function createCapabilityHttpsServer(
-  registry: CapabilityRegistry,
-  authenticate: Authenticate,
-  auditFailure: AuditFailure,
-  tls: CapabilityHttpsOptions,
-  tracing?: CapabilityServerTracingOptions,
-  limits?: CapabilityServerLimits
-): HttpsServer {
+export function createCapabilityHttpsServer(options: CapabilityHttpsServerOptions): HttpsServer {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !CAPABILITY_HTTPS_SERVER_KEYS.includes(key)))
+    throw Error('Invalid capability HTTPS server options');
+  const { registry, authenticate, auditFailure, tls, tracing, limits } = options;
   const pem = (value: unknown): value is string | Buffer => (typeof value === 'string' && value.trim().length > 0) || (Buffer.isBuffer(value) && value.length > 0);
   if (
     !tls ||

@@ -78,7 +78,7 @@ test('hostile requests never produce a 5xx, crash the process or break later val
     store = new ApplicationStore(definition);
   store.apply(0, []);
   store.publish(1);
-  const control = createControlPlane(store, token),
+  const control = createControlPlane({ repository: store, token: token }),
     data = createDataPlane(store, { health: { timeoutMs: 100 } }),
     crashes = [];
   const onCrash = error => crashes.push(error);

@@ -165,12 +165,12 @@ test('workspace capability request traces through authorization and execution wi
       }
     }
   );
-  const service = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'actor' } : undefined),
-    () => {},
-    { tracer, trustRemoteParent: true }
-  );
+  const service = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'actor' } : undefined),
+    auditFailure: () => {},
+    tracing: { tracer, trustRemoteParent: true }
+  });
   service.listen(0, '127.0.0.1');
   await once(service, 'listening');
   const dir = await mkdtemp(join(tmpdir(), 'workspace-cap-trace-'));

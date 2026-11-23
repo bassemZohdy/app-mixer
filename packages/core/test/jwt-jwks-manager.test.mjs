@@ -151,7 +151,7 @@ test('JWKS endpoint restrictions, body limits and server integration', async () 
     await assert.rejects(m.refresh(), /JWKS refresh failed/);
     const registry = new CapabilityRegistry(() => {});
     registry.register({ operationId: 'read', method: 'GET', path: '/read' }, { authorize: () => true, validate: () => true, execute: () => true });
-    const server = createCapabilityServer(registry, m.authenticate, () => {}),
+    const server = createCapabilityServer({ registry: registry, authenticate: m.authenticate, auditFailure: () => {} }),
       base = await listen(server);
     try {
       const response = await fetch(base + '/capabilities/read/invoke', {

@@ -77,7 +77,7 @@ if (role === 'init') {
     server.listen(port('DATA_PORT', 3002), '127.0.0.1');
   } else if (role === 'control') {
     store = new SqliteApplicationStore(database, initial);
-    server = createControlPlane(store, process.env.CONTROL_TOKEN);
+    server = createControlPlane({ repository: store, token: process.env.CONTROL_TOKEN });
     server.listen(port('CONTROL_PORT', 3001), process.env.CONTROL_BIND || '127.0.0.1');
   } else if (role === 'agent') {
     const model = {

@@ -180,11 +180,11 @@ test('recovery discovery capability enforces HTTP authentication and tenant poli
     discovery = new SqliteAgentActionRecoveryDiscovery(path, { scope, authorize: () => true });
     const registry = new CapabilityRegistry(() => {});
     registerActionRecoveryDiscovery(registry, { discovery, scope, operationId: 'recovery', path: '/recovery', limit: 5, authorize: () => true });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'Bearer valid' ? actor : req.headers.authorization === 'Bearer other' ? { tenantId: 'other', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? actor : req.headers.authorization === 'Bearer other' ? { tenantId: 'other', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (token, query) =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/recovery/invoke`, {

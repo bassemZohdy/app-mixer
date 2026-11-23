@@ -438,11 +438,11 @@ test('generated offline runtime queues, synchronizes and resolves a conflict thr
     }
   );
   registry.register({ operationId: 'items.current', method: 'GET', path: '/items' }, { authorize: ctx => ctx.principalId === 'local', validate: () => true, execute: () => stored });
-  const upstream = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-    () => {}
-  );
+  const upstream = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+    auditFailure: () => {}
+  });
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-runtime-'));
@@ -1577,11 +1577,11 @@ test('generated offline worker preserves uncertainty after capability audit fail
       }
     }
   );
-  const upstream = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-    () => {}
-  );
+  const upstream = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+    auditFailure: () => {}
+  });
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-offline-audit-'));
@@ -1728,11 +1728,11 @@ test('operator recovery view discovers, verifies and displays audited offline re
     registerOfflineAbandonedRecoveryCapability(registry, queue, { ...base, candidate: candidate('recover'), verifyStopped: () => true });
     registerOfflineVerificationCapability(registry, queue, { ...base, candidate: candidate('verify'), verify: () => 'applied' });
     registerOfflineRecoveryEvidenceCapability(registry, queue, { ...base, candidate: candidate('evidence') });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+      auditFailure: () => {}
+    });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('demo-app', dir);
@@ -1893,11 +1893,11 @@ test('operator archive view retires and reads authorized records through the cap
     registerOfflineArchiveListCapability(registry, queue, { ...base, candidate: candidate('archived'), kind: 'archived', authorizeListing: () => true });
     registerOfflineArchiveCapability(registry, queue, { ...base, candidate: candidate('retire'), authorizeOperation: () => allow });
     registerOfflineArchiveReadCapability(registry, queue, { ...base, candidate: candidate('read'), authorizeArchived: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+      auditFailure: () => {}
+    });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('demo-app', dir);

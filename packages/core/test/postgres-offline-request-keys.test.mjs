@@ -59,11 +59,11 @@ test('two browser devices allocate and dispatch one shared request through authe
     };
     registerSharedOfflineAllocation(front, store, { ...common, candidate: { operationId: 'offline.allocate', method: 'POST', path: '/allocate' } });
     registerSharedOfflineDispatch(front, external, store, { ...common, candidate: { operationId: 'offline.dispatch', method: 'POST', path: '/dispatch' } });
-    server = createCapabilityServer(
-      front,
-      req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'user' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: front,
+      authenticate: req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'user' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = async (operation, input) => {
       const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {

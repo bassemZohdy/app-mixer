@@ -52,11 +52,7 @@ test('manual start view retries an uncertain response with the same durable iden
       getDefinition: () => ({ version: 1, manifest }),
       authorize: () => true
     });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('manual-start', dir);

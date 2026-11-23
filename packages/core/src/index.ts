@@ -356,6 +356,8 @@ export type {
   DevelopmentPreviewOptions,
   PromotionImportPolicy,
   PromotionExportSigner,
+  ControlPlaneOptions,
+  DevelopmentPlanesOptions,
   DataPlaneHealthOptions,
   DataPlaneServer,
   DataPlaneHttpsServer,
@@ -373,7 +375,7 @@ export type { Proposal, ProposalSummary } from './proposals.js';
 export { importOpenAPI, CapabilityRegistry, CapabilityOutcomeUncertainError, CAPABILITY_EFFECT, markNoEffect, hadNoEffect } from './capabilities.js';
 export type { CapabilityCandidate, InvocationContext, CapabilityAuditEvent, CapabilityAuditSink } from './capabilities.js';
 export { createCapabilityServer, createCapabilityHttpsServer } from './capability-server.js';
-export type { CapabilityServerTracingOptions, CapabilityHttpsOptions, CapabilityServerLimits } from './capability-server.js';
+export type { CapabilityServerTracingOptions, CapabilityHttpsOptions, CapabilityServerLimits, CapabilityServerOptions, CapabilityHttpsServerOptions } from './capability-server.js';
 export { createOpenAPIGetBinding } from './openapi-get.js';
 export { PublishedDefinitionCache, CachedPublishedRepository } from './published-cache.js';
 export type { CacheScope } from './published-cache.js';

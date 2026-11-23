@@ -84,7 +84,7 @@ test('shared signed promotions are atomic, isolated and usable by remote rollout
       .digest('hex'),
     signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
-    control = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+    control = createControlPlane({ repository: source, token: token, exportSigner: signer });
   let plane,
     slowPlane,
     slowRelease,

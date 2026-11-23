@@ -126,16 +126,16 @@ for (const phase of ['before', 'after'])
         }
       });
       registerOfflineRecoveryEvidenceCapability(controls, queue, { ...base, candidate: candidate('evidence') });
-      control = createCapabilityServer(
-        controls,
-        req =>
+      control = createCapabilityServer({
+        registry: controls,
+        authenticate: req =>
           req.headers.authorization === 'Bearer operator'
             ? { tenantId: 'tenant', principalId: 'operator' }
             : req.headers.authorization === 'Bearer other'
               ? { tenantId: 'other', principalId: 'operator' }
               : undefined,
-        () => {}
-      );
+        auditFailure: () => {}
+      });
       control.listen(0, '127.0.0.1');
       await once(control, 'listening');
       const call = (operation, input, token = 'operator') =>

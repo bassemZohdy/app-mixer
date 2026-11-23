@@ -121,7 +121,7 @@ test('SQLite downgrade is persistent and rejects stale competing writes', () => 
 test('control plane rejects lossy downgrades and keeps published definitions unchanged', async () => {
   const store = new ApplicationStore(initial),
     token = 'a-strong-local-token-at-least-32-characters',
-    control = createControlPlane(store, token);
+    control = createControlPlane({ repository: store, token: token });
   store.migrateDraft(0, 2);
   store.apply(1, [{ op: 'setPageDescription', pageId: 'home', description: 'Keep' }]);
   store.publish(2);
@@ -149,7 +149,7 @@ test('control plane protects migration and data plane continues serving the prio
   const store = new ApplicationStore(initial);
   store.publish(0);
   const token = 'a-strong-local-token-at-least-32-characters',
-    control = createControlPlane(store, token),
+    control = createControlPlane({ repository: store, token: token }),
     data = createDataPlane(store);
   control.listen(0, '127.0.0.1');
   data.listen(0, '127.0.0.1');
@@ -204,7 +204,7 @@ test('definition migration previews are isolated and match the committed draft',
 test('control plane migration preview requires authentication and never changes the draft', async () => {
   const store = new ApplicationStore(initial),
     token = 'a-strong-local-token-at-least-32-characters',
-    control = createControlPlane(store, token);
+    control = createControlPlane({ repository: store, token: token });
   control.listen(0, '127.0.0.1');
   await once(control, 'listening');
   try {

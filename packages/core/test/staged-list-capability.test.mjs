@@ -145,11 +145,11 @@ test('discovery is authenticated over HTTP and indexes the scoped status scan', 
   try {
     const op = store.stage(scope, 'pay', { secret: 'private' });
     registerStagedListCapability(registry, store, { candidate, applicationId: 'app', externalOperationId: 'pay', cursorKey: randomBytes(32), authorize: () => true, authorizeOperation: () => true });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/pay.list/invoke`, {
@@ -265,11 +265,7 @@ test('bounded discovery aborts slow operation policy and retains capacity until 
         return true;
       }
     });
-    server = createCapabilityServer(
-      s.registry,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: s.registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = () =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/pay.list/invoke`, {

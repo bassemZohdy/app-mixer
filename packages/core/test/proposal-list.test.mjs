@@ -26,7 +26,7 @@ const wait = async predicate => {
 
 test('FEAT-036 GET /proposals lists id, base revision and status for the developer token only', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);
@@ -56,7 +56,7 @@ test('FEAT-036 GET /proposals lists id, base revision and status for the develop
 
 test('FEAT-036 the review page loads a proposal chosen from the list and shows action results beside the buttons', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);

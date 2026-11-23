@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { CapabilityRegistry, createCapabilityServer, importOpenAPI } from '../dist/index.js';
+import { CapabilityRegistry, createCapabilityServer, createCapabilityHttpsServer, importOpenAPI } from '../dist/index.js';
 async function start(server) {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -29,19 +29,24 @@ test('capability request limits are bounded, snapshotted and enforced before inv
     }
   );
   for (const invalid of [null, [], { maxRequestBytes: 0 }, { maxRequestBytes: 1048575 }, { maxRequestBytes: 8388609 }, { maxRequestBytes: 1.5 }, { maxRequestBytes: '2097152' }, { extra: true }])
-    assert.throws(() => createCapabilityServer(registry, auth, audit, undefined, invalid), /Invalid capability server limits/);
+    assert.throws(() => createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: audit, limits: invalid }), /Invalid capability server limits/);
   let reads = 0;
-  const onceOnly = createCapabilityServer(registry, auth, audit, undefined, {
-    get maxRequestBytes() {
-      reads++;
-      return reads === 1 ? 2097152 : 0;
+  const onceOnly = createCapabilityServer({
+    registry: registry,
+    authenticate: auth,
+    auditFailure: audit,
+    limits: {
+      get maxRequestBytes() {
+        reads++;
+        return reads === 1 ? 2097152 : 0;
+      }
     }
   });
   assert.equal(reads, 1);
   onceOnly.close();
   const limits = { maxRequestBytes: 2 * 1024 * 1024 },
-    server = createCapabilityServer(registry, auth, audit, undefined, limits),
-    baseline = createCapabilityServer(registry, auth, audit);
+    server = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: audit, limits: limits }),
+    baseline = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: audit });
   limits.maxRequestBytes = 1024 * 1024;
   try {
     const url = await start(server),
@@ -81,16 +86,16 @@ test('authenticated UI and agent calls share authorization, validation, audit an
       return response.json();
     }
   });
-  const server = createCapabilityServer(
-    registry,
-    req =>
+  const server = createCapabilityServer({
+    registry: registry,
+    authenticate: req =>
       req.headers.authorization === 'Bearer allowed'
         ? { tenantId: 'tenant-a', principalId: 'alice' }
         : req.headers.authorization === 'Bearer denied'
           ? { tenantId: 'tenant-b', principalId: 'alice' }
           : undefined,
-    event => authFailures.push(event)
-  );
+    auditFailure: event => authFailures.push(event)
+  });
   try {
     const url = await start(server);
     const call = (credential, origin, input = {}) =>
@@ -122,13 +127,13 @@ test('authenticated UI and agent calls share authorization, validation, audit an
 
 test('authentication audit failure blocks access without exposing internal errors', async () => {
   const registry = new CapabilityRegistry(() => {});
-  const server = createCapabilityServer(
-    registry,
-    () => undefined,
-    () => {
+  const server = createCapabilityServer({
+    registry: registry,
+    authenticate: () => undefined,
+    auditFailure: () => {
       throw Error('internal secret');
     }
-  );
+  });
   try {
     const url = await start(server);
     const response = await fetch(`${url}/capabilities/x/invoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"origin":"ui","input":{}}' });
@@ -154,11 +159,7 @@ test('post-execution audit failure returns an explicit uncertain outcome without
       }
     }
   );
-  const server = createCapabilityServer(
-    registry,
-    () => ({ tenantId: 'tenant', principalId: 'person' }),
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'person' }), auditFailure: () => {} });
   try {
     const url = await start(server),
       response = await fetch(`${url}/capabilities/write/invoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: {} }) });
@@ -182,11 +183,7 @@ test('shared offline uncertain outcomes are signaled explicitly to clients', asy
       }
     }
   );
-  const server = createCapabilityServer(
-    registry,
-    () => ({ tenantId: 'tenant', principalId: 'person' }),
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'person' }), auditFailure: () => {} });
   try {
     const url = await start(server),
       response = await fetch(`${url}/capabilities/write/invoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: {} }) });
@@ -200,11 +197,7 @@ test('shared offline uncertain outcomes are signaled explicitly to clients', asy
 test('successful capability without a return value uses an explicit null result', async () => {
   const registry = new CapabilityRegistry(() => {});
   registry.register({ operationId: 'write', method: 'POST', path: '/write' }, { authorize: () => true, validate: () => true, execute: () => undefined });
-  const server = createCapabilityServer(
-    registry,
-    () => ({ tenantId: 'tenant', principalId: 'person' }),
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'person' }), auditFailure: () => {} });
   try {
     const url = await start(server),
       response = await fetch(`${url}/capabilities/write/invoke`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: {} }) });
@@ -254,11 +247,7 @@ test('TASK-006 a refusal keeps the status its error code or documented legacy me
       }
     };
   for (const [operationId, execute] of Object.entries(outcomes)) registry.register({ operationId, method: 'POST', path: '/' + operationId }, { authorize: () => true, validate: () => true, execute });
-  const server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    ),
+  const server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} }),
     url = await start(server);
   try {
     const expected = {

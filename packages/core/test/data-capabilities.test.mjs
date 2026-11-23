@@ -39,11 +39,7 @@ test('bounded data policies cannot execute a late write after timeout or saturat
       registerDataCapability(registry, provider, options);
       options.policyTimeoutMs = 30000;
       options.maxPendingPolicies = 100;
-      server = createCapabilityServer(
-        registry,
-        () => ({ tenantId: 'tenant', principalId: 'alice' }),
-        () => {}
-      );
+      server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
       await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
       const call = () =>
         fetch(`http://127.0.0.1:${server.address().port}/capabilities/items.put/invoke`, {
@@ -111,11 +107,7 @@ test('optional rechecks prevent record access when scope or record policy is rev
         assert.throws(() => registerDataCapability(new CapabilityRegistry(() => {}), provider, { ...options, recheckAuthorization: 'true' }), /Invalid data capability/);
         registerDataCapability(registry, provider, options);
         options.recheckAuthorization = false;
-        server = createCapabilityServer(
-          registry,
-          () => ({ tenantId: 'tenant', principalId: 'alice' }),
-          () => {}
-        );
+        server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
         await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
         const input = operation === 'put' ? { id: 'one', expectedRevision: null, value: { text: 'new' } } : operation === 'delete' ? { id: 'one', expectedRevision: 1 } : { id: 'one' };
         const call = () =>
@@ -203,14 +195,14 @@ test('authenticated UI and agent calls share data capability policies and tenant
     ['delete', 'DELETE']
   ])
     registerDataCapability(registry, provider, { ...common, operation, candidate: { operationId: `people.${operation}`, method, path: '/people' } });
-  const server = createCapabilityServer(
-    registry,
-    req => {
+  const server = createCapabilityServer({
+    registry: registry,
+    authenticate: req => {
       const [tenantId, principalId] = (req.headers.authorization ?? '').split(':');
       return tenantId && principalId ? { tenantId, principalId } : undefined;
     },
-    () => {}
-  );
+    auditFailure: () => {}
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const call = async (operation, input, tenant = 'a', principal = 'allowed', origin = 'ui') => {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/people.${operation}/invoke`, {

@@ -83,11 +83,11 @@ test('generated forms coordinate two devices through authenticated PostgreSQL sl
       authorizeSlot: (_actor, slot) => slot === 'app-mixer-offline-form-v1:shared'
     });
     registerSharedOfflineDispatch(front, external, keys, { ...common, candidate: { operationId: 'offline.dispatch', method: 'POST', path: '/dispatch' }, executions });
-    server = createCapabilityServer(
-      front,
-      req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'user' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: front,
+      authenticate: req => (req.headers.authorization === 'Bearer trusted' ? { tenantId: 'tenant', principalId: 'user' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const invoke = async (operation, input) => {
       const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {

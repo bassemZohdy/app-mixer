@@ -15,7 +15,7 @@ test('authentication audit rejects invalid input and database failures deny the 
   await assert.rejects(sink.record({ reason: 'other' }), /Invalid authentication audit event/);
   await assert.rejects(sink.record({ reason: 'unauthenticated', remoteAddress: 'not-an-ip' }), /Invalid authentication audit event/);
   const registry = new CapabilityRegistry(() => {}),
-    server = createCapabilityServer(registry, () => undefined, sink.record);
+    server = createCapabilityServer({ registry: registry, authenticate: () => undefined, auditFailure: sink.record });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
@@ -43,7 +43,7 @@ test('PostgreSQL authentication-failure audit is shared, ordered and excludes ra
     await first.initialize();
     key.fill(9);
     const registry = new CapabilityRegistry(() => {});
-    server = createCapabilityServer(registry, () => undefined, first.record);
+    server = createCapabilityServer({ registry: registry, authenticate: () => undefined, auditFailure: first.record });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const urlBase = `http://127.0.0.1:${server.address().port}`;

@@ -40,8 +40,8 @@ test('remote promotion authenticates both endpoints, verifies the package and re
   const source = new ApplicationStore(initial),
     target = new ApplicationStore(initial);
   source.publish(0);
-  const a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken),
+  const a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]),
     events = [];
   try {
@@ -72,8 +72,8 @@ test('authorization is checked twice and denied imports leave the target unchang
   const source = new ApplicationStore(initial),
     target = new ApplicationStore(initial);
   source.publish(0);
-  const a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken),
+  const a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]),
     stages = [],
     events = [];
@@ -100,7 +100,7 @@ test('a lost response after commit is reported as uncertain without retrying', a
   const source = new ApplicationStore(initial),
     target = new ApplicationStore(initial);
   source.publish(0);
-  const a = createControlPlane(source, sourceToken);
+  const a = createControlPlane({ repository: source, token: sourceToken });
   let calls = 0;
   const b = createServer(async (req, res) => {
     calls++;
@@ -130,8 +130,8 @@ test('rejects unsafe configuration and unexpected source identity before import'
   const source = new ApplicationStore(initial),
     target = new ApplicationStore(initial);
   source.publish(0);
-  const a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken),
+  const a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]);
   try {
     const client = createRemotePromotionClient(options(sourceOrigin, targetOrigin));
@@ -148,8 +148,8 @@ test('remote promotion signs a verified export for a signature-enforcing target'
   source.publish(0);
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     verify = createSignedPromotionVerifier([{ keyId: 'release-key', sourceEnvironment: 'development', publicKey }], 'production'),
-    a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken, undefined, undefined, undefined, { verifyWithEvidence: verify.verifyWithEvidence }),
+    a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken, promotionPolicy: { verifyWithEvidence: verify.verifyWithEvidence } }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]);
   try {
     const client = createRemotePromotionClient(options(sourceOrigin, targetOrigin, { signPackage: (pkg, details) => signPromotionPackage(pkg, details.targetEnvironment, 'release-key', privateKey) }));
@@ -167,8 +167,8 @@ test('remote client rejects signer substitutions before sending an import', asyn
   source.publish(0);
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     verify = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'development', publicKey }], 'production'),
-    a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken, undefined, undefined, undefined, { verify }),
+    a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken, promotionPolicy: { verify } }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]);
   try {
     const client = createRemotePromotionClient(
@@ -193,8 +193,8 @@ test('remote promotion signs the target version and rejects a signer using anoth
   source.publish(0);
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     verify = createSignedPromotionVerifier([{ keyId: 'release', sourceEnvironment: 'development', publicKey }], 'production', { requireVersionBound: true }),
-    a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken, undefined, undefined, undefined, { verifyWithEvidence: verify.verifyWithEvidence }),
+    a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken, promotionPolicy: { verifyWithEvidence: verify.verifyWithEvidence } }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]);
   try {
     const bad = createRemotePromotionClient(options(sourceOrigin, targetOrigin, { signPackage: (pkg, details) => signPromotionPackage(pkg, details.targetEnvironment, 'release', privateKey, 1) }));
@@ -216,8 +216,8 @@ test('remote promotion transfers a signed release principal to target provenance
   source.publish(0);
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     verify = createSignedPromotionVerifier([{ keyId: 'release', sourceEnvironment: 'development', publicKey, signerPrincipal: 'release-service' }], 'production', { requireSignerIdentity: true }),
-    a = createControlPlane(source, sourceToken),
-    b = createControlPlane(target, targetToken, undefined, undefined, undefined, { verifyWithEvidence: verify.verifyWithEvidence }),
+    a = createControlPlane({ repository: source, token: sourceToken }),
+    b = createControlPlane({ repository: target, token: targetToken, promotionPolicy: { verifyWithEvidence: verify.verifyWithEvidence } }),
     [sourceOrigin, targetOrigin] = await Promise.all([listen(a), listen(b)]);
   try {
     const client = createRemotePromotionClient(

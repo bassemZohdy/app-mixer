@@ -4,7 +4,17 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createControlPlane, createDataPlane, SqliteApplicationStore, createExtensionPublicationGuard, DevelopmentProposals } from '../dist/index.js';
+import {
+  CapabilityRegistry,
+  createCapabilityServer,
+  createCapabilityHttpsServer,
+  createControlPlane,
+  createDataPlane,
+  createDevelopmentPlanes,
+  SqliteApplicationStore,
+  createExtensionPublicationGuard,
+  DevelopmentProposals
+} from '../dist/index.js';
 
 const token = 'a-strong-local-token-at-least-32-characters';
 const auth = { authorization: `Bearer ${token}` };
@@ -18,13 +28,24 @@ async function stop(server) {
 }
 const post = (value, extra = {}) => ({ method: 'POST', headers: { ...auth, 'content-type': 'application/json', ...extra }, body: JSON.stringify(value) });
 
+test('TASK-022 the option-object constructors refuse unknown keys', () => {
+  const store = new SqliteApplicationStore(':memory:', { id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
+  assert.throws(() => createControlPlane({ repository: store, token: token, unknown: true }), /Invalid control plane options/);
+  assert.throws(() => createDevelopmentPlanes({ repository: store, developerToken: token, agentToken: token, extra: 1 }), /Invalid development planes options/);
+  const registry = new CapabilityRegistry(() => {}),
+    auth = () => ({ tenantId: 'tenant', principalId: 'user' }),
+    audit = () => {};
+  assert.throws(() => createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: audit, nope: 1 }), /Invalid capability server options/);
+  assert.throws(() => createCapabilityHttpsServer({ registry: registry, authenticate: auth, auditFailure: audit, tls: { cert: 'c', key: 'k' }, wrong: 1 }), /Invalid capability HTTPS server options/);
+});
+
 test('planes isolate drafts from published runtime and survive control shutdown', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-planes-'));
   const path = join(dir, 'definitions.sqlite');
   const initial = { id: 'demo', schemaVersion: 1, revision: 0, pages: [] };
   const controlStore = new SqliteApplicationStore(path, initial);
   const dataStore = new SqliteApplicationStore(path, initial);
-  const control = createControlPlane(controlStore, token);
+  const control = createControlPlane({ repository: controlStore, token: token });
   const data = createDataPlane(dataStore);
   try {
     const cp = await start(control),
@@ -58,10 +79,10 @@ test('planes isolate drafts from published runtime and survive control shutdown'
 
 test('control plane rejects malformed and unauthorized mutations atomically', async () => {
   const store = new SqliteApplicationStore(':memory:', { id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  const control = createControlPlane(store, token);
+  const control = createControlPlane({ repository: store, token: token });
   try {
     const url = await start(control);
-    assert.throws(() => createControlPlane(store, 'short'), /token/);
+    assert.throws(() => createControlPlane({ repository: store, token: 'short' }), /token/);
     assert.equal((await fetch(`${url}/publish`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"expectedRevision":0}' })).status, 401);
     assert.equal((await fetch(`${url}/draft/patches`, post({ baseRevision: 0, patches: [{ op: 'addPage', page: { id: 'x' } }] }))).status, 400);
     assert.equal((await fetch(`${url}/draft/patches`, post({ baseRevision: 0, patches: [{ op: 'unknown' }] }))).status, 400);
@@ -84,7 +105,7 @@ test('extension references flow through proposals and require a publication guar
   const guard = createExtensionPublicationGuard([manifest], host, () => ({ components: [], tools: [], providers: [] }));
   for (const policy of [undefined, guard]) {
     const store = new SqliteApplicationStore(':memory:', initial, policy),
-      control = createControlPlane(store, token),
+      control = createControlPlane({ repository: store, token: token }),
       proposals = new DevelopmentProposals(store);
     try {
       const url = await start(control);

@@ -75,11 +75,11 @@ test('shared recovery discovery and coordinators resolve authorized runs across 
     const registry = new CapabilityRegistry(() => {});
     registerActionRecoveryDiscovery(registry, { discovery: action, scope, operationId: 'actions', path: '/actions', limit: 5, authorize: () => true });
     registerBudgetRecoveryDiscovery(registry, { discovery: tokens, scope, operationId: 'budgets', path: '/budgets', limit: 5, authorize: () => true });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { tenantId: 'other', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { tenantId: 'other', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (operation, auth) =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {

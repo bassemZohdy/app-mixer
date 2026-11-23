@@ -80,11 +80,7 @@ test('definition control view reviews an uncertain response through PostgreSQL a
     registerAgentDefinitionControl(registry, { definitions, scope, operationId: 'control', path: '/control', authorize: () => true });
     registerAgentDefinitionHistory(registry, { definitions, scope, operationId: 'history', path: '/history', limit: 1, authorize: () => true });
     registerAgentDefinitionControlHistory(registry, { definitions, scope, operationId: 'control-history', path: '/control-history', limit: 1, authorize: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('definition-control', dir);
@@ -322,11 +318,7 @@ test('definition editor reviews an uncertain create before updating through Post
     registerAgentDefinitionRead(registry, { definitions, scope, operationId: 'read', path: '/read', authorize: () => true });
     registerAgentDefinitionWrite(registry, { definitions, scope, operationId: 'write', path: '/write', authorize: () => true });
     registerAgentDefinitionHistory(registry, { definitions, scope, operationId: 'history', path: '/history', limit: 1, authorize: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('definition-editor', dir);
@@ -504,11 +496,7 @@ test('manual start panel uses authorized shared definition status through the ge
       getDefinition: (tenant, agent) => definitions.get({ tenantId: tenant, principalId: 'operator' }, agent),
       authorize: () => true
     });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('manual-shared', dir);

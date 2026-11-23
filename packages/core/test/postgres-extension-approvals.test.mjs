@@ -138,11 +138,11 @@ test('committed extension decision with a lost database response is explicitly u
     registerExtensionApprovalDecision(registry, { ...base, candidate: candidate('decide', 'POST'), authorizeDecision: () => true });
     registerExtensionApprovalStatus(registry, { ...base, candidate: candidate('status', 'GET') });
     registerExtensionApprovalHistory(registry, { ...base, candidate: candidate('history', 'GET') });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'Bearer admin' ? admin : req.headers.authorization === 'Bearer other' ? { ...admin, tenantId: 'other' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'Bearer admin' ? admin : req.headers.authorization === 'Bearer other' ? { ...admin, tenantId: 'other' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (id, input, token = 'admin') =>
         fetch(`http://127.0.0.1:${server.address().port}/capabilities/${id}/invoke`, {
@@ -297,11 +297,7 @@ test('administrative approval policy timeout returns HTTP 503', async () => {
     policyTimeoutMs: 100,
     maxPendingPolicies: 1
   });
-  const server = createCapabilityServer(
-    registry,
-    () => admin,
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: registry, authenticate: () => admin, auditFailure: () => {} });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/decide/invoke`, {

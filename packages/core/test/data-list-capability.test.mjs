@@ -192,11 +192,7 @@ test('HTTP reverse listing reports an unsupported provider as unavailable', asyn
       authorize: () => true,
       authorizeItem: () => true
     });
-    server = createCapabilityServer(
-      s.registry,
-      () => ({ tenantId: 'tenant', principalId: 'alice' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: s.registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const prefixResponse = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/legacy.prefix/invoke`, {
       method: 'POST',
@@ -390,11 +386,7 @@ test('filters use host-approved literal property names, including empty names', 
       ['a']
     );
     await assert.rejects(registry.invoke('literal.list', { filter: { field: 'a', value: 5 } }, alice), /Invalid capability input/);
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'alice' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/literal.list/invoke`, {
       method: 'POST',
@@ -476,11 +468,7 @@ test('array membership filtering is opt-in, typed, authorized and cursor-bound',
         }),
       /Invalid data list capability/
     );
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'alice' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/arrays.list/invoke`, {
       method: 'POST',
@@ -745,11 +733,11 @@ test('large records are bounded per page and single large records still make pro
 
 test('HTTP listing enforces authentication, rejects cursor tampering and returns authorized rows', async () => {
   const s = setup(),
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'alice' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'alice' } : undefined),
+      auditFailure: () => {}
+    });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const url = `http://127.0.0.1:${server.address().port}/capabilities/items.list/invoke`,
@@ -979,11 +967,7 @@ test('authenticated HTTP listing accepts multiple filters and rejects changed cu
     authorize: () => true,
     authorizeItem: (actor, item) => actor.principalId === item.value.owner
   });
-  const server = createCapabilityServer(
-    registry,
-    () => ({ tenantId: 'tenant', principalId: 'alice' }),
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const call = input =>
@@ -1307,11 +1291,7 @@ test('bounded item policies time out without returning partial pages and retain 
     registerDataListCapability(registry, provider, options);
     options.policyTimeoutMs = 30000;
     options.maxPendingPolicies = 100;
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'alice' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await new Promise(resolve => server.once('listening', resolve));
     const call = () =>
@@ -1379,11 +1359,7 @@ test('optional page rechecks reject scope or record access revoked during a scan
       assert.throws(() => registerDataListCapability(new CapabilityRegistry(() => {}), provider, { ...options, recheckAuthorization: 'true' }), /Invalid data list/);
       registerDataListCapability(registry, provider, options);
       options.recheckAuthorization = false;
-      server = createCapabilityServer(
-        registry,
-        () => ({ tenantId: 'tenant', principalId: 'alice' }),
-        () => {}
-      );
+      server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
       server.listen(0, '127.0.0.1');
       await new Promise(resolve => server.once('listening', resolve));
       const call = () =>
@@ -1704,11 +1680,7 @@ test('record verification reports an HTTP conflict without returning stale recor
         return true;
       }
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'alice' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'alice' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const response = fetch(`http://127.0.0.1:${server.address().port}/capabilities/http.list/invoke`, {
       method: 'POST',

@@ -59,7 +59,7 @@ const stores = {
 for (const [storeName, create] of Object.entries(stores)) {
   test(`FIX-027: a patch that adds an unrenderable component returns 400 naming the component and property (${storeName})`, async () => {
     const store = create(definition()),
-      control = createControlPlane(store, developer);
+      control = createControlPlane({ repository: store, token: developer });
     try {
       const url = await start(control);
       for (const { name, component, message } of unrenderable) {
@@ -103,7 +103,7 @@ for (const [storeName, create] of Object.entries(stores)) {
   test(`FIX-027: publishing a stored draft that holds an unrenderable component returns 400 (${storeName})`, async () => {
     for (const { name, component, message } of unrenderable) {
       const store = create(definition(component)),
-        control = createControlPlane(store, developer);
+        control = createControlPlane({ repository: store, token: developer });
       try {
         const url = await start(control);
         assert.equal((await send(`${url}/publish`, developer, { expectedRevision: 7 }))[0], 409, 'a stale revision is still a conflict');
@@ -125,7 +125,7 @@ for (const [storeName, create] of Object.entries(stores)) {
 
   test(`FIX-027: a Table stays a valid draft component and is refused at publish (${storeName})`, async () => {
     const store = create(definition()),
-      control = createControlPlane(store, developer);
+      control = createControlPlane({ repository: store, token: developer });
     try {
       const url = await start(control);
       assert.equal(
@@ -152,7 +152,7 @@ for (const [storeName, create] of Object.entries(stores)) {
 
 test('FIX-027: a proposal that carries an unrenderable component returns 400 and never becomes pending', async () => {
   const repo = new ApplicationStore(definition());
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const pp = await start(planes.proposal),
       cp = await start(planes.control);
@@ -182,16 +182,16 @@ test('FIX-027: approving a proposal returns 400 when the repository refuses its 
     const valid = { id: component.id, type: 'Text', props: { text: 'ok' } };
     const repo = new ApplicationStore(definition(valid)),
       copy = definition(component);
-    const planes = createDevelopmentPlanes(
-      {
+    const planes = createDevelopmentPlanes({
+      repository: {
         getDraft: () => structuredClone(copy),
         apply: (revision, patches) => repo.apply(revision, patches),
         publish: revision => repo.publish(revision),
         getPublished: version => repo.getPublished(version)
       },
-      developer,
-      agent
-    );
+      developerToken: developer,
+      agentToken: agent
+    });
     try {
       const pp = await start(planes.proposal),
         cp = await start(planes.control);

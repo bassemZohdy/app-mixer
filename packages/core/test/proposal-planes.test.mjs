@@ -17,8 +17,8 @@ const post = (token, body) => ({ method: 'POST', headers: { ...auth(token), 'con
 
 test('agent can propose but only developer can approve and publish', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  assert.throws(() => createDevelopmentPlanes(repo, developer, developer), /must differ/);
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  assert.throws(() => createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: developer }), /must differ/);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);
@@ -48,7 +48,7 @@ test('agent can propose but only developer can approve and publish', async () =>
 
 test('stale and malformed proposals fail without changing the draft', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);
@@ -69,7 +69,7 @@ test('stale and malformed proposals fail without changing the draft', async () =
 test('review UI loads preview, approves draft, and publishes only on separate click', async () => {
   const { runInNewContext } = await import('node:vm');
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  const planes = createDevelopmentPlanes(repo, developer, agent);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);
@@ -163,7 +163,7 @@ test('review UI enables extension approval only when a trusted matching renderer
   const { A2UIRenderer, APP_MIXER_CATALOG, basicRegistry } = await import('../../web/dist/index.js');
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
   const moduleSource = `export const installedExtensions=[{id:'sample.chart',version:'1.0.0',scope:'application',components:{chart:{render:(c,_child,_data,doc)=>{const node=doc.createElement('p');node.textContent=c.label;return node;},validate:c=>{if(typeof c.label!=='string')throw Error('Invalid chart');}}}}];`;
-  const planes = createDevelopmentPlanes(repo, developer, agent, undefined, { extensionModule: moduleSource });
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent, preview: { extensionModule: moduleSource } });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal);

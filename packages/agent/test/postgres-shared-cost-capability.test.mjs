@@ -58,9 +58,9 @@ test('shared cost discovery capability fixes the budget and page size through au
     registerSharedCostPending(registry, config);
     config.limit = 100;
     config.authorize = () => false;
-    server = createCapabilityServer(
-      registry,
-      req =>
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req =>
         req.headers.authorization === 'Bearer good'
           ? actor
           : req.headers.authorization === 'Bearer other'
@@ -68,8 +68,8 @@ test('shared cost discovery capability fixes the budget and page size through au
             : req.headers.authorization === 'Bearer denied'
               ? { ...actor, principalId: 'denied' }
               : undefined,
-      () => {}
-    );
+      auditFailure: () => {}
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const request = (token, query) =>
@@ -143,11 +143,7 @@ test('shared cost capability bounds policy callbacks and retains slots for stall
   config.timeoutMs = 30000;
   let server;
   try {
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const request = () =>
@@ -218,11 +214,7 @@ test('shared cost capability returns unavailable when ledger authorization times
   registerSharedCostPending(registry, { ledger, operationId: 'shared_pending', path: '/shared/pending', limit: 5, authorize: () => true });
   let server;
   try {
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/shared_pending/invoke`, {

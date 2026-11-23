@@ -69,7 +69,7 @@ for (const [name, create] of Object.entries(stores)) {
 
   test(`FIX-029: the Control Plane answers 201 for a new version and 200 for an unchanged draft (${name})`, async () => {
     const store = create(),
-      control = createControlPlane(store, token);
+      control = createControlPlane({ repository: store, token: token });
     try {
       const url = await start(control);
       const first = await fetch(`${url}/publish`, post({ expectedRevision: 0 }));

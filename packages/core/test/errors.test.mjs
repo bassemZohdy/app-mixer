@@ -48,10 +48,10 @@ test('the control plane maps by code, with only documented plain messages as leg
       throw new Error('Revision conflict');
     }
   }
-  const failing = createControlPlane(new Store({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }), token);
+  const failing = createControlPlane({ repository: new Store({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }), token: token });
   failing.listen(0, '127.0.0.1');
   await once(failing, 'listening');
-  const real = createControlPlane(new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }), token);
+  const real = createControlPlane({ repository: new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }), token: token });
   real.listen(0, '127.0.0.1');
   await once(real, 'listening');
   try {
@@ -61,14 +61,14 @@ test('the control plane maps by code, with only documented plain messages as leg
     const plain = await post(failing);
     assert.equal(plain.status, 409);
     assert.deepEqual(await plain.json(), { error: 'Revision conflict' });
-    const odd = createControlPlane(
-      new (class extends ApplicationStore {
+    const odd = createControlPlane({
+      repository: new (class extends ApplicationStore {
         apply() {
           throw new Error('Revision conflict (internal detail)');
         }
       })({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }),
-      token
-    );
+      token: token
+    });
     odd.listen(0, '127.0.0.1');
     await once(odd, 'listening');
     try {
@@ -108,11 +108,7 @@ test('the capability server maps expected refusals by code, honours documented l
   refuse('legacy', () => new Error('Data revision conflict'));
   refuse('boom', () => new Error('database exploded: secret'));
   refuse('lookalike', () => new Error('Data revision conflict, retry later: secret'));
-  const server = createCapabilityServer(
-    registry,
-    () => ({ tenantId: 't', principalId: 'p' }),
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 't', principalId: 'p' }), auditFailure: () => {} });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {

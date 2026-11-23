@@ -35,11 +35,11 @@ test('lease recovery history capability is authenticated, scoped and independent
   try {
     history = new SqliteAgentLeaseRecoveryHistory(s.path, { scope, authorize: () => read });
     registerAgentLeaseRecoveryHistory(registry, { history, scope, operationId: 'lease-history', path: '/lease-history', limit: 1, authorize: () => allow });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'Bearer valid' ? actor : req.headers.authorization === 'Bearer other' ? { ...actor, tenantId: 'other' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? actor : req.headers.authorization === 'Bearer other' ? { ...actor, tenantId: 'other' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/capabilities/lease-history/invoke`,
       call = (token, input = { query: {} }) =>
@@ -99,11 +99,7 @@ test('lease history capability bounds policy and history callbacks and fences la
       }
     });
     registerAgentLeaseRecoveryHistory(registry, { history, scope, operationId: 'lease-history', path: '/lease-history', limit: 10, authorize: () => true, timeoutMs: 100, maxPending: 1 });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/capabilities/lease-history/invoke`,
       call = () => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: { query: {} } }) });

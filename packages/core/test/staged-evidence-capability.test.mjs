@@ -104,11 +104,11 @@ test('evidence capability enforces authentication and paging at the HTTP boundar
   let server;
   try {
     registerStagedEvidenceCapability(s.registry, s.store, { candidate, applicationId: 'app', externalOperationId: 'pay', authorize: () => true, authorizeOperation: () => true });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'auditor' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'auditor' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {
@@ -156,11 +156,7 @@ test('bounded evidence reads discard results when operation authorization stalls
           return true;
         }
       });
-      server = createCapabilityServer(
-        s.registry,
-        () => ({ tenantId: 'tenant', principalId: 'auditor' }),
-        () => {}
-      );
+      server = createCapabilityServer({ registry: s.registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'auditor' }), auditFailure: () => {} });
       await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
       const call = () =>
         fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {

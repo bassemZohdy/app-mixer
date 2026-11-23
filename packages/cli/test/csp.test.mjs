@@ -43,7 +43,11 @@ function assertPolicy(response, html, label) {
 }
 
 test('the development review page and the approval review page need no unsafe-inline', async () => {
-  const control = createDevelopmentPlanes(new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }), 'd'.repeat(32), 'a'.repeat(32)).control;
+  const control = createDevelopmentPlanes({
+    repository: new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }),
+    developerToken: 'd'.repeat(32),
+    agentToken: 'a'.repeat(32)
+  }).control;
   control.listen(0, '127.0.0.1');
   await once(control, 'listening');
   const approval = createAgentApprovalServer({ authenticate: () => undefined, resolve: () => undefined });
@@ -175,7 +179,11 @@ test(
   'the review pages run their inline scripts under the policy without violations',
   { skip: process.env.APP_MIXER_TEST_BROWSER !== '1' ? 'set APP_MIXER_TEST_BROWSER=1 to run in a real browser' : browserBinary ? false : 'no Chrome or Edge found; set CHROME_BIN' },
   async () => {
-    const control = createDevelopmentPlanes(new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }), 'd'.repeat(32), 'a'.repeat(32)).control;
+    const control = createDevelopmentPlanes({
+      repository: new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }),
+      developerToken: 'd'.repeat(32),
+      agentToken: 'a'.repeat(32)
+    }).control;
     control.listen(0, '127.0.0.1');
     await once(control, 'listening');
     const approval = createAgentApprovalServer({ authenticate: () => undefined, resolve: () => undefined });

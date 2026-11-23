@@ -76,11 +76,11 @@ try {
   registerBudgetRecovery(registry, { ...base, operationId: 'recover', path: '/recover' });
   registerBudgetRecoveryHistory(registry, { ...base, operationId: 'history', path: '/history', limit: 10 });
   const identities = { operator: { tenantId: 'tenant', principalId: 'operator' }, auditor: { tenantId: 'tenant', principalId: 'auditor' }, other: { tenantId: 'other', principalId: 'operator' } };
-  capabilityServer = createCapabilityServer(
+  capabilityServer = createCapabilityServer({
     registry,
-    req => identities[(req.headers.authorization ?? '').replace('Bearer ', '')],
-    () => {}
-  );
+    authenticate: req => identities[(req.headers.authorization ?? '').replace('Bearer ', '')],
+    auditFailure: () => {}
+  });
   capabilityServer.listen(0, '127.0.0.1');
   await once(capabilityServer, 'listening');
   const call = (name, principal, query) =>

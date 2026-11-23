@@ -150,11 +150,11 @@ test('migration view rehearses and applies through the authenticated generated p
     registerDataMigrationApply(registry, { ...base, candidate: candidate('apply', 'POST'), plan, authorizeApply: () => true, requirePlanDigest: true, clock: () => 100 });
     registerDataMigrationAudit(registry, { ...base, candidate: candidate('audit', 'GET') });
     registerDataMigrationStatus(registry, { ...base, candidate: candidate('status', 'GET'), authorizeStatus: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+      auditFailure: () => {}
+    });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('demo-app', dir);

@@ -44,7 +44,7 @@ test('published data and durable configured agent remain available after control
   try {
     controlStore = new SqliteApplicationStore(appPath, initial);
     dataStore = new SqliteApplicationStore(appPath, initial);
-    control = createControlPlane(controlStore, token);
+    control = createControlPlane({ repository: controlStore, token: token });
     data = createDataPlane(dataStore);
     const cp = await start(control),
       dp = await start(data),

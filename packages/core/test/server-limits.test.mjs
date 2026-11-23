@@ -36,12 +36,8 @@ test('the servers core creates are limited and the TLS policy is TLS 1.2 or late
   const registry = new CapabilityRegistry(() => {}),
     store = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
   for (const server of [
-    createCapabilityServer(
-      registry,
-      () => undefined,
-      () => {}
-    ),
-    createControlPlane(store, 't'.repeat(32)),
+    createCapabilityServer({ registry: registry, authenticate: () => undefined, auditFailure: () => {} }),
+    createControlPlane({ repository: store, token: 't'.repeat(32) }),
     createDataPlane(store)
   ])
     assert.deepEqual(limits(server), { headers: 10000, request: 30000, keepAlive: 5000, idle: 30000 });

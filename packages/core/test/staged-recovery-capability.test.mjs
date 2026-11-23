@@ -183,11 +183,7 @@ test('bounded recovery times out without accepting a late submitter confirmation
         return true;
       }
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = () =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`, {
@@ -247,11 +243,11 @@ test('recovery evidence capability restricts and pages actor-attributed records 
       timeoutMs: 1000,
       maxPending: 2
     });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/recovery-evidence/invoke`, {

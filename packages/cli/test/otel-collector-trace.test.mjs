@@ -366,7 +366,7 @@ async function scenario(driveBrowser, browserLanguage) {
       source = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }),
       target = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
     source.publish(0);
-    const control = createControlPlane(source, sourceToken, undefined, undefined, undefined, undefined, undefined, { tracer: tracer('app-mixer-control-plane'), trustRemoteParent: true });
+    const control = createControlPlane({ repository: source, token: sourceToken, tracing: { tracer: tracer('app-mixer-control-plane'), trustRemoteParent: true } });
     servers.push(control);
     const controlUrl = await listen(control);
     // Capability service whose operation promotes through the remote connector, so its client spans run under the capability span.
@@ -399,12 +399,12 @@ async function scenario(driveBrowser, browserLanguage) {
         }
       }
     );
-    const capabilities = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${capabilityToken}` ? actor : undefined),
-      () => {},
-      { tracer: capabilityTracer, trustRemoteParent: true }
-    );
+    const capabilities = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${capabilityToken}` ? actor : undefined),
+      auditFailure: () => {},
+      tracing: { tracer: capabilityTracer, trustRemoteParent: true }
+    });
     servers.push(capabilities);
     const capabilityUrl = await listen(capabilities);
 

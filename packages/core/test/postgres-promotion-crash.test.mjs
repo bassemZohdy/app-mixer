@@ -82,7 +82,7 @@ test('shared rollout reconciles a killed promotion before and after commit', { s
       .digest('hex'),
     signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
-    control = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+    control = createControlPlane({ repository: source, token: token, exportSigner: signer });
   let plane;
   try {
     control.listen(0, '127.0.0.1');

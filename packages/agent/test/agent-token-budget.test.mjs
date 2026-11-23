@@ -819,9 +819,9 @@ test('budget recovery capability enforces HTTP authentication and host policy', 
       registry = new CapabilityRegistry(() => {});
     registerBudgetRecovery(registry, { recovery, scope, runId: 'run', operationId: 'budget_recover', path: '/budget/recover' });
     registerBudgetRecoveryPending(registry, { recovery, scope, runId: 'run', operationId: 'budget_pending', path: '/budget/pending', limit: 5 });
-    server = createCapabilityServer(
-      registry,
-      req =>
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req =>
         req.headers.authorization === 'Bearer good'
           ? { tenantId: 't', principalId: 'operator' }
           : req.headers.authorization === 'Bearer other'
@@ -829,8 +829,8 @@ test('budget recovery capability enforces HTTP authentication and host policy', 
             : req.headers.authorization === 'Bearer denied'
               ? { tenantId: 't', principalId: 'denied' }
               : undefined,
-      () => {}
-    );
+      auditFailure: () => {}
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const call = (token, query) =>
@@ -886,11 +886,7 @@ test('budget recovery capability reports timed-out verification as unavailable',
       }),
       registry = new CapabilityRegistry(() => {});
     registerBudgetRecovery(registry, { recovery, scope, runId: 'run', operationId: 'budget_recover', path: '/budget/recover' });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 't', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 't', principalId: 'operator' }), auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_recover/invoke`, {

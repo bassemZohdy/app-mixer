@@ -13,7 +13,7 @@ const controlStore = new SqliteApplicationStore('./app.sqlite', initial);
 const dataStore = new SqliteApplicationStore('./app.sqlite', initial);
 // In a real process, supply this through a secret mechanism and share it only with the developer client.
 const controlToken = randomBytes(32).toString('hex');
-const control = createControlPlane(controlStore, controlToken);
+const control = createControlPlane({ repository: controlStore, token: controlToken });
 const data = createDataPlane(dataStore);
 control.listen(3001, '127.0.0.1');
 data.listen(3002, '127.0.0.1');

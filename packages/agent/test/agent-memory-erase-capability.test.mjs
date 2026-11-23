@@ -42,11 +42,11 @@ async function exercise(memory) {
   config.authorizeErase = () => false;
   await memory.put(actor, scope, 'one', 'secret', write);
   await memory.put(actor, other, 'one', 'keep', write);
-  const server = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === 'operator' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
-    () => {}
-  );
+  const server = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === 'operator' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
+    auditFailure: () => {}
+  });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const call = (input, auth = 'operator', operation = 'erase') =>

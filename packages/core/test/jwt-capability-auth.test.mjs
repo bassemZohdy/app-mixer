@@ -45,7 +45,7 @@ test('access tokens authenticate capability calls and enforce separate capabilit
       }
     }
   );
-  const server = createCapabilityServer(registry, auth, event => failures.push(event));
+  const server = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: event => failures.push(event) });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
@@ -137,7 +137,7 @@ test('trusted key sets rotate without restarting the capability server', async (
     oldToken = await token(),
     newToken = await token({}, { kid: 'two' }, other.privateKey);
   registry.register({ operationId: 'read', method: 'POST', path: '/read' }, { authorize: () => true, validate: () => true, execute: () => ({ ok: true }) });
-  const server = createCapabilityServer(registry, auth, () => {});
+  const server = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: () => {} });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
@@ -230,7 +230,7 @@ test('durable scoped revocation blocks JWT capability calls and survives restart
         }
       }
     );
-    server = createCapabilityServer(registry, auth, () => {});
+    server = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const url = `http://127.0.0.1:${server.address().port}/capabilities/read/invoke`,

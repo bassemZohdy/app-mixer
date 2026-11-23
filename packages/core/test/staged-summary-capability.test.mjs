@@ -136,11 +136,11 @@ test('bounded staged summary rejects stalled policy without leaking counts', asy
         return true;
       }
     });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'auditor' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'auditor' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (token = 'valid', input = {}) =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/pay.summary/invoke`, {

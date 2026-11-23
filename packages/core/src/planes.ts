@@ -145,16 +145,21 @@ export type PromotionImportPolicy =
   | { verify: (input: unknown, targetEnvironment: string, applicationId: string, expectedVersion: number) => PromotionPackage; verifyWithEvidence?: never }
   | { verify?: never; verifyWithEvidence: (input: unknown, targetEnvironment: string, applicationId: string, expectedVersion: number) => VerifiedPromotion };
 export type PromotionExportSigner = (pkg: PromotionPackage, targetEnvironment: string, expectedVersion: number) => SignedPromotionPackage | Promise<SignedPromotionPackage>;
-export function createControlPlane(
-  repository: DefinitionRepository,
-  token: string,
-  proposals?: DevelopmentProposals,
-  develop?: DevelopmentRunner,
-  preview?: DevelopmentPreviewOptions,
-  promotionPolicy?: PromotionImportPolicy,
-  exportSigner?: PromotionExportSigner,
-  tracing?: ControlPlaneTracingOptions
-): Server {
+/** Options for the local-development control plane; unknown keys are refused. */
+export type ControlPlaneOptions = {
+  repository: DefinitionRepository;
+  token: string;
+  proposals?: DevelopmentProposals;
+  develop?: DevelopmentRunner;
+  preview?: DevelopmentPreviewOptions;
+  promotionPolicy?: PromotionImportPolicy;
+  exportSigner?: PromotionExportSigner;
+  tracing?: ControlPlaneTracingOptions;
+};
+const CONTROL_PLANE_KEYS = ['repository', 'token', 'proposals', 'develop', 'preview', 'promotionPolicy', 'exportSigner', 'tracing'];
+export function createControlPlane(options: ControlPlaneOptions): Server {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !CONTROL_PLANE_KEYS.includes(key))) throw Error('Invalid control plane options');
+  const { repository, token, proposals, develop, preview, promotionPolicy, exportSigner, tracing } = options;
   if (typeof token !== 'string' || token.length < 32 || /[\r\n]/.test(token)) throw Error('Control token must contain at least 32 characters');
   if (preview?.extensionModule !== undefined && (typeof preview.extensionModule !== 'string' || preview.extensionModule.length > 1024 * 1024)) throw Error('Invalid preview extension module');
   if (promotionPolicy !== undefined && (!promotionPolicy || (typeof promotionPolicy.verify === 'function') === (typeof promotionPolicy.verifyWithEvidence === 'function')))
@@ -714,16 +719,30 @@ export function createProposalPlane(proposals: DevelopmentProposals, token: stri
     respond(res, 201, proposals.propose(input.baseRevision, input.patches));
   });
 }
-/** Construct both local-development planes with distinct credentials. */
-export function createDevelopmentPlanes(
-  repository: DefinitionRepository,
-  developerToken: string,
-  agentToken: string,
-  develop?: DevelopmentRunner,
-  preview?: DevelopmentPreviewOptions,
-  promotionPolicy?: PromotionImportPolicy
-) {
+/** Construct both local-development planes with distinct credentials; unknown keys are refused. */
+export type DevelopmentPlanesOptions = {
+  repository: DefinitionRepository;
+  developerToken: string;
+  agentToken: string;
+  develop?: DevelopmentRunner;
+  preview?: DevelopmentPreviewOptions;
+  promotionPolicy?: PromotionImportPolicy;
+};
+const DEVELOPMENT_PLANES_KEYS = ['repository', 'developerToken', 'agentToken', 'develop', 'preview', 'promotionPolicy'];
+export function createDevelopmentPlanes(options: DevelopmentPlanesOptions) {
+  if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => !DEVELOPMENT_PLANES_KEYS.includes(key))) throw Error('Invalid development planes options');
+  const { repository, developerToken, agentToken, develop, preview, promotionPolicy } = options;
   if (developerToken === agentToken) throw Error('Developer and agent tokens must differ');
   const proposals = new DevelopmentProposals(repository);
-  return { control: createControlPlane(repository, developerToken, proposals, develop, preview, promotionPolicy), proposal: createProposalPlane(proposals, agentToken) };
+  return {
+    control: createControlPlane({
+      repository,
+      token: developerToken,
+      proposals,
+      ...(develop !== undefined ? { develop } : {}),
+      ...(preview !== undefined ? { preview } : {}),
+      ...(promotionPolicy !== undefined ? { promotionPolicy } : {})
+    }),
+    proposal: createProposalPlane(proposals, agentToken)
+  };
 }

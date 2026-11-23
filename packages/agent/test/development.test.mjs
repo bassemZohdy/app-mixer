@@ -16,7 +16,7 @@ async function stop(server) {
 
 test('development model can propose but cannot modify or publish until developer approval', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
-  const planes = createDevelopmentPlanes(repo, developer, token);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: token });
   try {
     const url = await start(planes.proposal);
     let prompt;
@@ -93,7 +93,7 @@ test('developer UI requests a model proposal, reviews it, approves and publishes
   const { runInNewContext } = await import('node:vm');
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
   let developmentAgent;
-  const planes = createDevelopmentPlanes(repo, developer, token, (instruction, draft) => developmentAgent.propose(instruction, draft));
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: token, develop: (instruction, draft) => developmentAgent.propose(instruction, draft) });
   try {
     const pp = await start(planes.proposal),
       cp = await start(planes.control);
@@ -177,7 +177,7 @@ test('developer UI requests a model proposal, reviews it, approves and publishes
 test('development agent proposes and approves description changes after schema migration', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [{ id: 'home', title: 'Home', route: '/', components: [] }] });
   repo.migrateDraft(0, 2);
-  const planes = createDevelopmentPlanes(repo, developer, token);
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: token });
   try {
     const url = await start(planes.proposal),
       control = await start(planes.control);
@@ -221,7 +221,7 @@ test('migrated draft flows through development UI, approval, publication and wor
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [{ id: 'home', title: 'Home', route: '/', components: [] }] });
   repo.migrateDraft(0, 2);
   let developmentAgent, dom;
-  const planes = createDevelopmentPlanes(repo, developer, token, (instruction, draft) => developmentAgent.propose(instruction, draft));
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: token, develop: (instruction, draft) => developmentAgent.propose(instruction, draft) });
   try {
     const pp = await start(planes.proposal),
       cp = await start(planes.control),
@@ -324,7 +324,7 @@ test('development proposal keeps the model snapshot revision when the caller mut
 
 test('changed repository rejects an old proposal even if the supplied draft object is mutated', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [{ id: 'home', title: 'Home', route: '/', components: [] }] }),
-    planes = createDevelopmentPlanes(repo, developer, token);
+    planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: token });
   let unblock, started;
   const gate = new Promise(resolve => (unblock = resolve)),
     ready = new Promise(resolve => (started = resolve));

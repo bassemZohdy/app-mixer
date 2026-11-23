@@ -34,7 +34,7 @@ async function fixture() {
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
-    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+    server = createControlPlane({ repository: source, token: token, exportSigner: signer });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const config = {
@@ -482,11 +482,7 @@ test('poller control rejects revoked and late authorization without starting wor
         return mode === 'revoke' ? calls === 1 : true;
       }
     });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/capabilities/rollout.control/invoke`;
     await assert.rejects(registry.invoke('rollout.control', { action: 'start' }, context), /unavailable/);
@@ -892,11 +888,7 @@ test('poller control HTTP reports an uncertain outcome after action-specific aud
         if (event.phase === 'completed') throw Error('audit unavailable');
       }
     });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/rollout.control/invoke`, {
       method: 'POST',
@@ -1601,7 +1593,7 @@ test('rollout requires signed advancing imports and refuses a source behind reta
     await direct.importPublication({ actor, sourceVersion: 2, expectedVersion: 0 });
     const stale = new ApplicationStore(definition);
     stale.publish(0);
-    const staleServer = createControlPlane(stale, token);
+    const staleServer = createControlPlane({ repository: stale, token: token });
     staleServer.listen(0, '127.0.0.1');
     await once(staleServer, 'listening');
     try {
@@ -1650,11 +1642,7 @@ test('rollout status capability exposes one separately authorized gate without t
     const status = await registry.invoke('rollout.status', {}, context);
     assert.deepEqual(status, { phase: 'uncertain', sourceVersion: 1, expectedVersion: 0 });
     assert.equal(Object.hasOwn(status, 'token'), false);
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/rollout.status/invoke`, {
       method: 'POST',
@@ -1834,11 +1822,7 @@ test('rollout status HTTP reports bounded authorization saturation as unavailabl
       timeoutMs: 200,
       maxPending: 1
     });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = () =>
         fetch(`http://127.0.0.1:${server.address().port}/capabilities/status/invoke`, {
@@ -2108,11 +2092,7 @@ test('rollout recovery HTTP reports unverified evidence and bounded saturation',
       timeoutMs: 200,
       maxPending: 1
     });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = () =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`, {
@@ -2283,11 +2263,7 @@ test('rollout evidence capability rechecks permission and bounds stalled policy'
       timeoutMs: 200,
       maxPending: 1
     });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = () =>
         fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {

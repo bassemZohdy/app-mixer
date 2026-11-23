@@ -200,7 +200,7 @@ test('PostgreSQL retains the recovery gate after a completion audit timeout', { 
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
-    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+    server = createControlPlane({ repository: source, token: token, exportSigner: signer });
   let release, seen;
   const gate = new Promise(resolve => (release = resolve));
   try {
@@ -274,7 +274,7 @@ test('PostgreSQL gates recovery when a worker dies after publication', { skip: !
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
-    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+    server = createControlPlane({ repository: source, token: token, exportSigner: signer });
   let child;
   try {
     server.listen(0, '127.0.0.1');
@@ -388,7 +388,7 @@ test('PostgreSQL rollout coordinates competing hosts and gates uncertain imports
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     signer = (pkg, environment, version) => signPromotionPackage(pkg, environment, 'key', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'key', sourceEnvironment: 'dev', publicKey }], 'prod', { requireVersionBound: true }),
-    server = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer);
+    server = createControlPlane({ repository: source, token: token, exportSigner: signer });
   let release,
     started,
     blocked = true,

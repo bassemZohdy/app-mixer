@@ -67,11 +67,7 @@ test('staged editor verifies uncertainty through an authenticated host capabilit
       authorizeOperation: (_actor, _operation, reference) => reference === 'case-1',
       verify: () => outcome
     });
-    server = createCapabilityServer(
-      outer,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: outer, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const calls = [];
     globalThis.fetch = (url, options) => {
@@ -239,11 +235,7 @@ test('staged editor pages authorized evidence and renders references as text', a
       authorize: () => true,
       authorizeOperation: () => true
     });
-    server = createCapabilityServer(
-      outer,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: outer, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, options) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -391,11 +383,7 @@ test('staged editor browses authorized operations and checks a selected ID witho
       authorize: () => true,
       authorizeOperation: (_actor, op) => !hidden.has(op.id)
     });
-    server = createCapabilityServer(
-      outer,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: outer, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, options) =>
       originalFetch(new URL(String(url).replace('/api/capabilities/', '/capabilities/') + '/invoke', `http://127.0.0.1:${server.address().port}`), {
@@ -535,11 +523,7 @@ test('staged editor displays explicitly authorized scope-wide operation counts',
       authorize: () => true,
       authorizeAggregate: () => true
     });
-    server = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     globalThis.fetch = (url, options) => {
       requests++;
@@ -805,11 +789,11 @@ test('editor recovers a terminated submitter and reviews its evidence through au
       authorizeOperation: () => true,
       verify: () => 'not_applied'
     });
-    server = createCapabilityServer(
-      outer,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: outer,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const requests = [];
     globalThis.fetch = (url, options) => {

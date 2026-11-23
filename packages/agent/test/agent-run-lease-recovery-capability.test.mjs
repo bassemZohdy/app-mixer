@@ -27,7 +27,7 @@ function close(s) {
   rmSync(s.dir, { recursive: true, force: true });
 }
 async function serve(registry, revision, authenticate = () => actor) {
-  const server = createCapabilityServer(registry, authenticate, () => {});
+  const server = createCapabilityServer({ registry: registry, authenticate: authenticate, auditFailure: () => {} });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}/capabilities/lease-recover/invoke`,
     call = (input = { reference: 'case-1', revision }, headers = {}) =>

@@ -61,7 +61,7 @@ test('advancing imports reject replay and older sources after reopening while pr
   const { privateKey, publicKey } = generateKeyPairSync('ed25519'),
     signer = (pkg, env, version) => signPromotionPackage(pkg, env, 'release', privateKey, version),
     verifier = createSignedPromotionVerifier([{ keyId: 'release', sourceEnvironment: 'development', publicKey }], 'production', { requireVersionBound: true }),
-    remote = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer),
+    remote = createControlPlane({ repository: source, token: token, exportSigner: signer }),
     url = await listen(remote);
   let target = new SqliteApplicationStore(path, definition);
   const options = { requireAdvancingSource: true, verifyWithEvidence: verifier.verifyWithEvidence };
@@ -123,7 +123,7 @@ test('imports authenticated publications locally and keeps serving during source
   const source = new ApplicationStore(definition),
     target = new ApplicationStore(definition);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     local = createDataPlane(target),
     [url, localUrl] = await Promise.all([listen(remote), listen(local)]),
     events = [];
@@ -147,7 +147,7 @@ test('checks authorization before fetching and before local import', async () =>
   const source = new ApplicationStore(definition),
     target = new ApplicationStore(definition);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote),
     stages = [],
     events = [];
@@ -177,7 +177,7 @@ test('SQLite publication and provenance survive restart without the remote sourc
     path = join(dir, 'app.sqlite'),
     source = new ApplicationStore(definition);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote);
   let target = new SqliteApplicationStore(path, definition);
   try {
@@ -211,7 +211,7 @@ test('bad source, redirects, configuration and uncertain local writes fail close
   }
   const source = new ApplicationStore(definition);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     base = await listen(remote),
     events = [];
   try {
@@ -235,7 +235,7 @@ test('rejects wrong publication identity and oversized responses without changin
   const source = new ApplicationStore({ ...definition, id: 'other' }),
     target = new ApplicationStore(definition);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote);
   try {
     await assert.rejects(createRemoteControlConnector(config(url, target)).importPublication(request), /export failed/);
@@ -260,7 +260,7 @@ test('stale target versions and denied publication guards never overwrite local 
   const source = new ApplicationStore(definition),
     target = new ApplicationStore(definition, () => false);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote);
   try {
     const connector = createRemoteControlConnector(config(url, target));
@@ -285,7 +285,7 @@ test('signed remote import binds target version and stores verifiable signer evi
       requireVersionBound: true,
       requireSignerIdentity: true
     }),
-    remote = createControlPlane(source, token, undefined, undefined, undefined, undefined, signer),
+    remote = createControlPlane({ repository: source, token: token, exportSigner: signer }),
     url = await listen(remote);
   try {
     const connector = createRemoteControlConnector(config(url, target, { verifyWithEvidence: verifier.verifyWithEvidence }));
@@ -309,8 +309,8 @@ test('signed mode rejects unsigned exports and untrusted signing keys before loc
   const { privateKey } = generateKeyPairSync('ed25519'),
     trusted = generateKeyPairSync('ed25519'),
     verify = createSignedPromotionVerifier([{ keyId: 'release', sourceEnvironment: 'development', publicKey: trusted.publicKey }], 'production', { requireVersionBound: true }),
-    unsigned = createControlPlane(source, token),
-    signed = createControlPlane(source, token, undefined, undefined, undefined, undefined, (pkg, env, version) => signPromotionPackage(pkg, env, 'release', privateKey, version)),
+    unsigned = createControlPlane({ repository: source, token: token }),
+    signed = createControlPlane({ repository: source, token: token, exportSigner: (pkg, env, version) => signPromotionPackage(pkg, env, 'release', privateKey, version) }),
     [a, b] = await Promise.all([listen(unsigned), listen(signed)]);
   try {
     for (const url of [a, b]) await assert.rejects(createRemoteControlConnector(config(url, target, { verifyWithEvidence: verify.verifyWithEvidence })).importPublication(request), /export failed/);
@@ -351,7 +351,7 @@ test('authorized discovery returns the latest exact application without importin
     target = new ApplicationStore(definition);
   source.publish(0);
   publishNext(source);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote),
     events = [];
   try {
@@ -417,7 +417,7 @@ test('discovery rechecks permission before returning a remotely observed version
   const source = new ApplicationStore(definition),
     target = new ApplicationStore(definition);
   source.publish(0);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote),
     events = [];
   let checks = 0;

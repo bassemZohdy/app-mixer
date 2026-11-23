@@ -64,7 +64,7 @@ test('only a correctly signed, valid access token ever reaches a capability', { 
     }
   );
   const failures = [],
-    server = createCapabilityServer(registry, auth, event => failures.push(event));
+    server = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: event => failures.push(event) });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const url = `http://127.0.0.1:${server.address().port}/capabilities/read/invoke`,

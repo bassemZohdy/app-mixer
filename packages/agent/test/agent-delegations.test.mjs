@@ -350,11 +350,11 @@ test('authenticated fixed-run delegation capabilities issue, renew, inspect and 
     for (const mode of ['issue', 'read', 'renew', 'revoke', 'history']) registerAgentDelegationCapability(registry, { ...base, mode, operationId: mode, path: '/' + mode });
     assert.throws(() => registerAgentDelegationCapability(registry, { ...base, runId: 'other', mode: 'read', operationId: 'bad', path: '/bad' }), /configuration|capability/);
     base.scope.agentId = 'other';
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'admin' ? admin : req.headers.authorization === 'other' ? { ...admin, tenantId: 'other' } : undefined),
-      event => events.push(event)
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'admin' ? admin : req.headers.authorization === 'other' ? { ...admin, tenantId: 'other' } : undefined),
+      auditFailure: event => events.push(event)
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const call = (mode, query, auth = 'admin') =>
@@ -578,7 +578,7 @@ test('delegation administration enforces signed identity, tenant, policy and tok
         authorizeAction: () => true,
         historyLimit: 10
       });
-    server = createCapabilityServer(registry, auth, () => {});
+    server = createCapabilityServer({ registry: registry, authenticate: auth, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const sign = (claims = {}) =>
@@ -778,11 +778,7 @@ test('delegation store authorization deadlines return HTTP unavailable without a
       authorize: () => true,
       authorizeAction: () => true
     });
-    server = createCapabilityServer(
-      registry,
-      () => admin,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => admin, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const request = () =>

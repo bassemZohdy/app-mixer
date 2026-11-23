@@ -37,11 +37,7 @@ test('operator reviews current state and evidence after a lost control response 
     registerAgentRunInspection(registry, { runs, scope, runId: 'run', operationId: 'inspect-run', path: '/inspect-run', authorize: () => true });
     registerAgentRunControl(registry, { runs, scope, runId: 'run', operationId: 'control-run', path: '/control-run', clock: () => 100, authorize: () => true });
     registerAgentRunControlHistory(registry, { history, scope, operationId: 'control-history', path: '/control-history', limit: 1, authorize: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('run-controls', dir);

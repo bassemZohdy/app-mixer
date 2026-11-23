@@ -123,11 +123,11 @@ test('HTTP recovery authenticates callers and does not accept client-supplied ou
   let server;
   try {
     registerOfflineAbandonedRecoveryCapability(s.registry, s.queue, { ...base, candidate: candidate('recover'), verifyStopped: () => true });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (body, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/recover/invoke`, {
@@ -157,11 +157,11 @@ test('evidence capability authorizes and pages immutable scoped history over HTT
     s.queue.recoverAbandonedWithEvidence(scope, 'owner', s.item.id, { operatorId: 'operator', reference: 'first' }, 10);
     s.queue.reconcileWithEvidence(scope, 'owner', s.item.id, 'applied', { operatorId: 'reviewer', reference: 'second' }, 11);
     registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, { ...base, candidate: candidate('evidence') });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/evidence/invoke`, {
@@ -248,11 +248,11 @@ test('recovery listing exposes only fixed-owner operation metadata and pages ove
     options.queuePrincipalId = 'different';
     options.targetOperationId = 'different';
     options.authorizeListing = () => false;
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/list/invoke`, {
@@ -336,11 +336,11 @@ test('authorized archive and retained recovery evidence are available over HTTP'
     registerOfflineArchiveReadCapability(s.registry, s.queue, { ...base, candidate: candidate('archive-read'), authorizeArchived: () => allowRead });
     registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, { ...base, candidate: candidate('evidence'), authorizeArchived: () => allowRead });
     registerOfflineRecoveryEvidenceCapability(s.registry, s.queue, { ...base, candidate: candidate('legacy-evidence') });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (operation, input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {
@@ -508,11 +508,11 @@ test('archive discovery lists fixed-scope metadata over HTTP', async () => {
     registration.queuePrincipalId = 'different';
     registration.authorizeListing = () => false;
     registerOfflineArchiveListCapability(s.registry, s.queue, { ...base, candidate: candidate('archived'), kind: 'archived', authorizeListing: () => allowed });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (operation, input, token = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {

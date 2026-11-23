@@ -40,7 +40,7 @@ test('a host-held promotion floor detects a restored target database before fetc
   source.publish(0);
   for (let i = 1; i < 4; i++) publishNext(source);
   let exports = 0;
-  const remote = createControlPlane(source, token);
+  const remote = createControlPlane({ repository: source, token: token });
   remote.prependListener('request', req => {
     if (req.url.startsWith('/promotion/export')) exports++;
   });
@@ -117,7 +117,7 @@ test('the promotion floor anchor catches up after a failed advance and fails clo
     source = new ApplicationStore(definition);
   source.publish(0);
   for (let i = 1; i < 3; i++) publishNext(source);
-  const remote = createControlPlane(source, token),
+  const remote = createControlPlane({ repository: source, token: token }),
     url = await listen(remote),
     target = new SqliteApplicationStore(path, definition);
   const anchor = {

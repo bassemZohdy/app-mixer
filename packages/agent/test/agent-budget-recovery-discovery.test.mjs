@@ -96,11 +96,11 @@ test('budget discovery capability authenticates and restricts fixed-scope pages'
     config.limit = 100;
     config.authorize = () => false;
     assert.throws(() => registerBudgetRecoveryDiscovery(registry, { ...config, operationId: 'bad' }), /Invalid/);
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'Bearer good' ? actor : req.headers.authorization === 'Bearer other' ? { ...actor, tenantId: 'other' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'Bearer good' ? actor : req.headers.authorization === 'Bearer other' ? { ...actor, tenantId: 'other' } : undefined),
+      auditFailure: () => {}
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const call = (token, query) =>
@@ -196,11 +196,7 @@ test('budget discovery capability returns unavailable on a timed-out policy', as
     });
     const registry = new CapabilityRegistry(() => {});
     registerBudgetRecoveryDiscovery(registry, { discovery, scope, operationId: 'budget_discovery', path: '/budget/discovery', limit: 5, authorize: () => true });
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/budget_discovery/invoke`, {
@@ -263,11 +259,7 @@ test('budget discovery capability bounds its own authorization without late acce
     const config = { ...base, timeoutMs: 100, maxPending: 1 };
     registerBudgetRecoveryDiscovery(registry, config);
     config.timeoutMs = 30000;
-    server = createCapabilityServer(
-      registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: registry, authenticate: () => actor, auditFailure: () => {} });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const call = () =>

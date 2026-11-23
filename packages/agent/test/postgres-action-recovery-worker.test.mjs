@@ -61,12 +61,12 @@ test('shared action recovery rechecks policy and cancellation before safe replay
     assert.equal((await journal.list({ status: 'uncertain' })).actions.length, 1);
     const registry = new CapabilityRegistry(() => {});
     registerSharedAgentRunReconciliation(registry, { runs, scope, runId, operationId: 'reconcile', path: '/reconcile', authorize: actor => actor.principalId === 'operator' });
-    server = createCapabilityServer(
-      registry,
-      req =>
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req =>
         req.headers.authorization === 'valid' ? { tenantId: 'tenant', principalId: 'operator' } : req.headers.authorization === 'other' ? { tenantId: 'other', principalId: 'operator' } : undefined,
-      () => {}
-    );
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (auth = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/reconcile/invoke`, {

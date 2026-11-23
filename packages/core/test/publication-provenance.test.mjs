@@ -99,7 +99,7 @@ test('provenance lookup is limited to the authenticated control plane', async ()
   store.publish(1);
   store.rollback(1, 2);
   const token = 'a-strong-local-token-at-least-32-characters';
-  const control = createControlPlane(store, token),
+  const control = createControlPlane({ repository: store, token: token }),
     data = createDataPlane(store);
   control.listen(0, '127.0.0.1');
   data.listen(0, '127.0.0.1');

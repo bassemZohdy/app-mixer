@@ -126,11 +126,11 @@ test('unknown provider outcomes leave uncertainty intact and HTTP input is authe
       authorizeOperation: () => true,
       verify: () => result
     });
-    server = createCapabilityServer(
-      s.registry,
-      req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req => (req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (input, auth = 'Bearer valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/verify/invoke`, {
@@ -248,11 +248,7 @@ test('bounded provider verification times out, fences late results and holds its
         return 'applied';
       }
     });
-    server = createCapabilityServer(
-      s.registry,
-      () => ({ tenantId: 'tenant', principalId: 'operator' }),
-      () => {}
-    );
+    server = createCapabilityServer({ registry: s.registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'operator' }), auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = () =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/verify/invoke`, {

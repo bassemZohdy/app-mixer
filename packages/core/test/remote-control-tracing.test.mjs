@@ -45,7 +45,7 @@ test('connector and Control Plane spans form a cross-service trace without sensi
     source = new ApplicationStore(initial),
     target = new ApplicationStore(initial);
   source.publish(0);
-  const control = createControlPlane(source, token, undefined, undefined, undefined, undefined, undefined, { tracer, trustRemoteParent: true }),
+  const control = createControlPlane({ repository: source, token: token, tracing: { tracer, trustRemoteParent: true } }),
     origin = await listen(control);
   try {
     const connector = createRemoteControlConnector(options(origin, target, { tracer, propagate: true }));
@@ -82,7 +82,7 @@ test('propagation is disabled by default and client errors are sanitized', async
     source = new ApplicationStore(initial),
     target = new ApplicationStore(initial);
   source.publish(0);
-  const control = createControlPlane(source, token, undefined, undefined, undefined, undefined, undefined, { tracer, trustRemoteParent: true }),
+  const control = createControlPlane({ repository: source, token: token, tracing: { tracer, trustRemoteParent: true } }),
     origin = await listen(control);
   try {
     await createRemoteControlConnector(options(origin, target, { tracer })).discoverLatest(actor);
@@ -120,7 +120,7 @@ test('telemetry failures do not block an authorized discovery or import', async 
         throw Error('telemetry unavailable');
       }
     },
-    control = createControlPlane(source, token, undefined, undefined, undefined, undefined, undefined, { tracer: broken }),
+    control = createControlPlane({ repository: source, token: token, tracing: { tracer: broken } }),
     origin = await listen(control);
   try {
     const connector = createRemoteControlConnector(options(origin, target, { tracer: broken, propagate: true }));

@@ -25,7 +25,7 @@ const post = (token, body) => ({ method: 'POST', headers: { authorization: `Bear
 test('record editor extension previews safely without invoking business capabilities', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] });
   const source = `import {createRecordEditor} from './data-editor.mjs';export const installedExtensions=[{id:'example.records',version:'1.0.0',scope:'application',components:{'record-editor':createRecordEditor({getOperation:'items.get',putOperation:'items.put',listOperation:'items.list',fields:[{key:'active',label:'Active',type:'boolean'}]})}}];`;
-  const planes = createDevelopmentPlanes(repo, developer, agent, undefined, { extensionModule: source });
+  const planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent, preview: { extensionModule: source } });
   try {
     const cp = await start(planes.control),
       pp = await start(planes.proposal),
@@ -88,7 +88,7 @@ test('record editor extension previews safely without invoking business capabili
 
 test('runtime and preview editor accept the same component contract', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }),
-    planes = createDevelopmentPlanes(repo, developer, agent);
+    planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-preview-'));
   try {
     const cp = await start(planes.control),
@@ -126,7 +126,7 @@ test('runtime and preview editor accept the same component contract', async () =
 
 test('staged editor preview shares its contract and cannot submit', async () => {
   const repo = new ApplicationStore({ id: 'demo', schemaVersion: 1, revision: 0, pages: [] }),
-    planes = createDevelopmentPlanes(repo, developer, agent);
+    planes = createDevelopmentPlanes({ repository: repo, developerToken: developer, agentToken: agent });
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-staged-preview-'));
   try {
     const cp = await start(planes.control),

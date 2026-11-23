@@ -29,11 +29,11 @@ function setup() {
   return { dir, runs, triggers, registry };
 }
 async function serve(registry) {
-  const server = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
-    () => {}
-  );
+  const server = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { ...actor, tenantId: 'other' } : undefined),
+    auditFailure: () => {}
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   return {
     server,

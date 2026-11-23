@@ -45,14 +45,14 @@ test('authenticated shared allocation and dispatch enforce scope, content, polic
   };
   registerSharedOfflineAllocation(front, store, { ...common, candidate: { operationId: 'offline.allocate', method: 'POST', path: '/allocate' } });
   registerSharedOfflineDispatch(front, external, store, { ...common, candidate: { operationId: 'offline.dispatch', method: 'POST', path: '/dispatch' } });
-  const server = createCapabilityServer(
-    front,
-    req => {
+  const server = createCapabilityServer({
+    registry: front,
+    authenticate: req => {
       const parts = (req.headers.authorization ?? '').split(':');
       return parts.length === 2 ? { tenantId: parts[0], principalId: parts[1] } : undefined;
     },
-    () => {}
-  );
+    auditFailure: () => {}
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const call = async (operation, input, auth = 'tenant:alice') => {

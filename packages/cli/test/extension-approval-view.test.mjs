@@ -251,11 +251,11 @@ test('extension approval view reconciles a lost response through the authenticat
     registerExtensionApprovalStatus(registry, { ...base, candidate: candidate('status', 'GET'), readTimeoutMs: 5000, maxPendingReads: 2 });
     registerExtensionApprovalDecision(registry, { ...base, candidate: candidate('decision', 'POST'), authorizeDecision: () => true });
     registerExtensionApprovalHistory(registry, { ...base, candidate: candidate('history', 'GET'), readTimeoutMs: 5000, maxPendingReads: 2 });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+      auditFailure: () => {}
+    });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('demo-app', dir);

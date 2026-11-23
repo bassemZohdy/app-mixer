@@ -33,11 +33,11 @@ test('slot capability takes identity from authentication and checks slot and pay
   registerSharedOfflineSlotCapability(registry, store, config);
   config.applicationId = 'changed';
   config.targetOperationId = 'changed';
-  const server = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === 'Bearer allowed' ? { tenantId: 'tenant', principalId: 'user' } : undefined),
-    () => {}
-  );
+  const server = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === 'Bearer allowed' ? { tenantId: 'tenant', principalId: 'user' } : undefined),
+    auditFailure: () => {}
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const call = async (input, authorization = 'Bearer allowed') => {

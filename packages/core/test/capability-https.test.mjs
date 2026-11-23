@@ -34,15 +34,15 @@ test('HTTPS verifies server trust, optional client certificates, and the normal 
     failures = [],
     registry = new CapabilityRegistry(event => events.push(event));
   registry.register({ operationId: 'read', method: 'POST', path: '/read' }, { authorize: actor => actor.tenantId === 'tenant', validate: () => true, execute: () => ++calls });
-  const server = createCapabilityHttpsServer(
-    registry,
-    req => {
+  const server = createCapabilityHttpsServer({
+    registry: registry,
+    authenticate: req => {
       authentications++;
       return req.headers.authorization === 'Bearer valid' ? { tenantId: 'tenant', principalId: 'alice' } : undefined;
     },
-    event => failures.push(event),
-    { cert, key, clientCa: ca }
-  );
+    auditFailure: event => failures.push(event),
+    tls: { cert, key, clientCa: ca }
+  });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const port = server.address().port;
@@ -73,8 +73,8 @@ test('HTTPS rejects missing TLS settings and accepts server-only TLS when explic
     auth = () => ({ tenantId: 'tenant', principalId: 'alice' }),
     audit = () => {};
   for (const config of [undefined, {}, { cert, key: '' }, { cert, key, clientCa: '' }, { cert, key, clientCA: ca }])
-    assert.throws(() => createCapabilityHttpsServer(registry, auth, audit, config), /TLS configuration/);
-  const server = createCapabilityHttpsServer(registry, auth, audit, { cert, key });
+    assert.throws(() => createCapabilityHttpsServer({ registry: registry, authenticate: auth, auditFailure: audit, tls: config }), /TLS configuration/);
+  const server = createCapabilityHttpsServer({ registry: registry, authenticate: auth, auditFailure: audit, tls: { cert, key } });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {
@@ -91,8 +91,11 @@ test('HTTPS enforces the configured request limit before invoking capabilities',
     auth = () => ({ tenantId: 'tenant', principalId: 'alice' }),
     audit = () => {};
   registry.register({ operationId: 'read', method: 'POST', path: '/read' }, { authorize: () => true, validate: () => true, execute: () => ++calls });
-  assert.throws(() => createCapabilityHttpsServer(registry, auth, audit, { cert, key }, undefined, { maxRequestBytes: 8388609 }), /Invalid capability server limits/);
-  const server = createCapabilityHttpsServer(registry, auth, audit, { cert, key }, undefined, { maxRequestBytes: 2 * 1024 * 1024 });
+  assert.throws(
+    () => createCapabilityHttpsServer({ registry: registry, authenticate: auth, auditFailure: audit, tls: { cert, key }, limits: { maxRequestBytes: 8388609 } }),
+    /Invalid capability server limits/
+  );
+  const server = createCapabilityHttpsServer({ registry: registry, authenticate: auth, auditFailure: audit, tls: { cert, key }, limits: { maxRequestBytes: 2 * 1024 * 1024 } });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   try {

@@ -302,13 +302,12 @@ test('generated proxy reads and writes a maximum-size record with explicitly rai
         validate: () => true
       });
     registry.register({ operationId: 'too-big', method: 'GET', path: '/large' }, { authorize: () => true, validate: () => true, execute: () => ({ text: 'x'.repeat(2 * 1024 * 1024) }) });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'user' } : undefined),
-      () => {},
-      undefined,
-      { maxRequestBytes: 2 * 1024 * 1024 }
-    );
+    upstream = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'user' } : undefined),
+      auditFailure: () => {},
+      limits: { maxRequestBytes: 2 * 1024 * 1024 }
+    });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('response-app', dir),
@@ -319,11 +318,7 @@ test('generated proxy reads and writes a maximum-size record with explicitly rai
     assert.equal((await call(app.url, 'items.get', { id: 'large' })).status, 502);
     assert.equal((await call(app.url, 'items.put', { id: 'written', expectedRevision: null, value: { text: payload } })).status, 413);
     await stop(child);
-    defaultUpstream = createCapabilityServer(
-      registry,
-      () => ({ tenantId: 'tenant', principalId: 'user' }),
-      () => {}
-    );
+    defaultUpstream = createCapabilityServer({ registry: registry, authenticate: () => ({ tenantId: 'tenant', principalId: 'user' }), auditFailure: () => {} });
     defaultUpstream.listen(0, '127.0.0.1');
     await once(defaultUpstream, 'listening');
     app = await start(target, { ...base, CAPABILITY_URL: `http://127.0.0.1:${defaultUpstream.address().port}/capabilities/`, CAPABILITY_REQUEST_MAX_BYTES: String(2 * 1024 * 1024) });
@@ -489,11 +484,11 @@ test('a proxy timeout during staged verification requires a later status check',
         return 'applied';
       }
     });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
     const target = await createProject('timeout-app', dir),
       app = await start(target, { CAPABILITY_URL: `http://127.0.0.1:${upstream.address().port}/capabilities/`, CAPABILITY_TOKEN: token, CAPABILITY_TIMEOUT_MS: '200' });

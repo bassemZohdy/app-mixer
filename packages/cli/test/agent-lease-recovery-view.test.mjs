@@ -41,11 +41,7 @@ test('lease recovery view handles a lost response through the authenticated prox
     registerAgentExpiredLeaseDiscovery(registry, { runs, scope, operationId: 'lease-list', path: '/lease-list', limit: 1, cursorKey: randomBytes(32), clock: () => 100, authorize: () => true });
     registerAgentLeaseRecovery(registry, { runs, scope, runId: 'run', operationId: 'lease-recover', path: '/lease-recover', clock: () => 100, authorize: () => true });
     registerAgentLeaseRecoveryHistory(registry, { history, scope, operationId: 'lease-history', path: '/lease-history', limit: 10, authorize: () => true });
-    upstream = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined),
-      () => {}
-    );
+    upstream = createCapabilityServer({ registry: registry, authenticate: req => (req.headers.authorization === `Bearer ${token}` ? actor : undefined), auditFailure: () => {} });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const target = await createProject('lease-demo', dir);

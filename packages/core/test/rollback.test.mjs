@@ -77,7 +77,7 @@ test('authenticated control rollback propagates through the data plane and its c
   store.apply(0, [{ op: 'setPageTitle', pageId: 'home', title: 'Changed' }]);
   store.publish(1);
   const token = 'a-strong-local-token-at-least-32-characters',
-    control = createControlPlane(store, token),
+    control = createControlPlane({ repository: store, token: token }),
     data = createDataPlane(cached);
   control.listen(0, '127.0.0.1');
   data.listen(0, '127.0.0.1');

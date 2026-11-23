@@ -73,11 +73,11 @@ test('generated app uses an authenticated loopback capability service without ex
       authorize: ctx => ctx.principalId === 'local',
       validate: () => true
     });
-  const upstream = createCapabilityServer(
-    registry,
-    req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
-    () => {}
-  );
+  const upstream = createCapabilityServer({
+    registry: registry,
+    authenticate: req => (req.headers.authorization === `Bearer ${token}` ? { tenantId: 'tenant', principalId: 'local' } : undefined),
+    auditFailure: () => {}
+  });
   upstream.listen(0, '127.0.0.1');
   await once(upstream, 'listening');
   const dir = await mkdtemp(join(tmpdir(), 'app-mixer-capability-'));

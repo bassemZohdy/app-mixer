@@ -45,9 +45,9 @@ test('authenticated lease discovery filters records and encrypts actor-bound cur
     options.cursorKey.fill(0);
     options.limit = 100;
     options.authorize = () => false;
-    server = createCapabilityServer(
-      s.registry,
-      req =>
+    server = createCapabilityServer({
+      registry: s.registry,
+      authenticate: req =>
         req.headers.authorization === 'Bearer alice'
           ? actor
           : req.headers.authorization === 'Bearer bob'
@@ -55,8 +55,8 @@ test('authenticated lease discovery filters records and encrypts actor-bound cur
             : req.headers.authorization === 'Bearer other'
               ? { ...actor, tenantId: 'other' }
               : undefined,
-      () => {}
-    );
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/capabilities/`,
       call = (operation, token, query = {}) =>
@@ -154,11 +154,7 @@ test('timed-out lease discovery cancels policy and does not return late data', a
         }
       })
     );
-    server = createCapabilityServer(
-      s.registry,
-      () => actor,
-      () => {}
-    );
+    server = createCapabilityServer({ registry: s.registry, authenticate: () => actor, auditFailure: () => {} });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/capabilities/lease-discovery/invoke`,
       call = () => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origin: 'ui', input: { query: {} } }) });

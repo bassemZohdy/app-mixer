@@ -102,11 +102,11 @@ test('shared budget recovery verifies usage and atomically records authorized ev
     registerBudgetRecovery(registry, { ...base, operationId: 'reconcile', path: '/reconcile' });
     registerBudgetRecoveryPending(registry, { ...base, operationId: 'pending', path: '/pending', limit: 10 });
     registerBudgetRecoveryHistory(registry, { ...base, operationId: 'history', path: '/history', limit: 10 });
-    server = createCapabilityServer(
-      registry,
-      req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { tenantId: 'other', principalId: 'operator' } : undefined),
-      () => {}
-    );
+    server = createCapabilityServer({
+      registry: registry,
+      authenticate: req => (req.headers.authorization === 'valid' ? actor : req.headers.authorization === 'other' ? { tenantId: 'other', principalId: 'operator' } : undefined),
+      auditFailure: () => {}
+    });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const call = (operation, input, auth = 'valid') =>
       fetch(`http://127.0.0.1:${server.address().port}/capabilities/${operation}/invoke`, {

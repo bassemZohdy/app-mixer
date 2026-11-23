@@ -28,14 +28,14 @@ test('authenticated staging is explicit and external submission rechecks actor p
       authorize: ctx => ctx.principalId !== 'denied',
       validate: () => true
     });
-  const server = createCapabilityServer(
-    outer,
-    req => {
+  const server = createCapabilityServer({
+    registry: outer,
+    authenticate: req => {
       const [tenantId, principalId] = (req.headers.authorization ?? '').split(':');
       return tenantId && principalId ? { tenantId, principalId } : undefined;
     },
-    () => {}
-  );
+    auditFailure: () => {}
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const call = async (operation, input, tenant = 't', principal = 'allowed', origin = 'ui') => {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/orders.${operation}/invoke`, {
@@ -133,11 +133,7 @@ test('revision-exhausted staged submission returns conflict without calling the 
   });
   const op = store.stage(scope, 'pay', { amount: 10 });
   db.prepare('UPDATE staged_business_operations SET state_revision=? WHERE tenant_id=? AND application_id=? AND id=?').run(Number.MAX_SAFE_INTEGER - 2, scope.tenantId, scope.applicationId, op.id);
-  const server = createCapabilityServer(
-    outer,
-    () => ({ tenantId: 't', principalId: 'user' }),
-    () => {}
-  );
+  const server = createCapabilityServer({ registry: outer, authenticate: () => ({ tenantId: 't', principalId: 'user' }), auditFailure: () => {} });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/capabilities/submit/invoke`, {
