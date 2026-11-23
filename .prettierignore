@@ -8,3 +8,10 @@ packages/web/test/fixtures/
 packages/web/test/legacy-clients/
 *.mdpackages/core/src/data-editor-preview.ts
 packages/core/src/staged-editor-preview.ts
+# TASK-008: scaffold sources are byte-frozen so createProject output stays byte-identical; the 200-column guard still applies.
+packages/cli/templates/server.mjs
+packages/cli/templates/capabilities.mjs
+packages/cli/templates/chat.mjs
+packages/cli/templates/extensions.mjs
+packages/cli/templates/workspace.mjs
+packages/cli/templates/index.html

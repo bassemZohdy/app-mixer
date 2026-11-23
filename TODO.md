@@ -2,9 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **TASK-008** · P2 · mid · Move the generated server, page, chat and workspace sources out of String.raw literals in packages/cli/src/index.ts into packages/cli/templates so they can be linted and syntax-checked
-  - Done when: createProject writes the same files byte for byte as before, and each template passes a syntax check; `npm run build && node --test packages/cli/test/create.test.mjs`
-  - State: next: decompose
 - [ ] **TASK-010** · P2 · mid · Share one copy of csp.ts and sqlite-open.ts (identical in core and agent), of the JSON body reader (8 inline copies) and of the bearer-token comparison (about 18 files)
   - Done when: each helper has one definition, and a test caps the number of copies; `npm run build && node --test packages/cli/test/shared-helpers.test.mjs`
   - Links: Depends: TASK-002
