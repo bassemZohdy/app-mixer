@@ -429,8 +429,11 @@ class _AppMixerA2UIState extends State<AppMixerA2UI> {
     });
     if (node.kind == 'Progress') {
       final max = node.max ?? 100.0;
-      final value = node.progress == null ? null : node.progress!.clamp(0.0, max).toDouble();
-      return LinearProgressIndicator(value: value, minHeight: 4, semanticsLabel: node.label);
+      final value = node.progress == null ? null : (node.progress! / max).clamp(0.0, 1.0).toDouble();
+      return Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+        ExcludeSemantics(child:Text(node.label ?? '')),
+        LinearProgressIndicator(value: value, minHeight: 4, semanticsLabel: node.label),
+      ]);
     }
     if (node.kind == 'Button') return TextButton(onPressed:widget.onAction==null ? null : (){
       if (!mounted || generation!=_generation || !identical(store,_store) || widget.onAction==null) return;
