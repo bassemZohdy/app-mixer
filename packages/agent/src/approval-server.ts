@@ -1,10 +1,10 @@
-﻿import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { SqliteAgentNotices } from './agent-notices.js';
 import { PostgresAgentNoticesFoundation } from './postgres-agent-notices-foundation.js';
 import { SqliteAgentApprovals, type AgentApprovalActor } from './agent-approvals.js';
 import { PostgresAgentApprovalsFoundation } from './postgres-agent-approvals-foundation.js';
 import { type AgentRunScope } from './durable-runs.js';
-import { inlineHashes } from './csp.js';
+import { BodyReadError, inlineHashes, readJsonBody } from '@app-mixer/shared';
 import { isIdentifier } from './validation.js';
 import { agentErrorStatus } from './errors.js';
 import { limitServer, guard } from './server-limits.js';
@@ -52,7 +52,7 @@ function field(parent, label, value) {
 }
 async function load() {
   items.replaceChildren();
-  message.textContent = 'Loadingâ€¦';
+  message.textContent = 'Loading…';
   const base = endpoint();
   try {
     let after,
@@ -174,20 +174,12 @@ function reply(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 async function decision(req: IncomingMessage): Promise<'approved' | 'rejected' | 'cancelled'> {
-  if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) throw Error('content');
-  let size = 0;
-  const parts: Buffer[] = [];
-  for await (const chunk of req) {
-    const part = Buffer.from(chunk);
-    size += part.length;
-    if (size > 1024) throw Error('size');
-    parts.push(part);
-  }
   let value: unknown;
   try {
-    value = JSON.parse(Buffer.concat(parts).toString('utf8'));
-  } catch {
-    throw Error('invalid');
+    value = await readJsonBody(req, { maxBytes: 1024 });
+  } catch (error) {
+    if (!(error instanceof BodyReadError)) throw error;
+    throw Error(error.reason === 'too-large' ? 'size' : error.reason === 'content-type' ? 'content' : 'invalid');
   }
   if (
     !value ||
@@ -343,26 +335,16 @@ export function createAgentApprovalServer(options: Options): Server {
                 return;
               }
               if (req.method === 'POST') {
-                if (url.search || !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) {
+                if (url.search) {
                   reply(res, 400, { error: 'Invalid request' });
                   return;
                 }
-                let size = 0;
-                const parts: Buffer[] = [];
-                for await (const chunk of req) {
-                  const part = Buffer.from(chunk);
-                  size += part.length;
-                  if (size > 1024) {
-                    reply(res, 413, { error: 'Invalid request' });
-                    return;
-                  }
-                  parts.push(part);
-                }
                 let value: unknown;
                 try {
-                  value = JSON.parse(Buffer.concat(parts).toString('utf8'));
-                } catch {
-                  reply(res, 400, { error: 'Invalid request' });
+                  value = await readJsonBody(req, { maxBytes: 1024 });
+                } catch (error) {
+                  if (cancellation?.signal.aborted) return;
+                  reply(res, error instanceof BodyReadError && error.reason === 'too-large' ? 413 : 400, { error: 'Invalid request' });
                   return;
                 }
                 if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length) {

@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import { parse, stringify } from 'node:querystring';
 
 /** Twilio request signature (HMAC-SHA1 over the URL and the sorted form fields), implemented locally so the Twilio SDK is not a dependency. */
@@ -48,7 +49,7 @@ export function validTwilioSignature(authToken: string, signature: string, url: 
   let valid = false;
   for (const candidate of candidates) {
     const expected = Buffer.from(twilioSignature(authToken, candidate, params));
-    valid = (expected.length === received.length && timingSafeEqual(expected, received)) || valid;
+    valid = (expected.length === received.length && timingSafeEqualBuffers(expected, received)) || valid;
   }
   return valid;
 }

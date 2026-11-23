@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -54,7 +55,7 @@ export function createSignedWebhookAuthenticator(options: SignedWebhookOptions) 
     let matched = 0;
     for (const secret of source.secrets) {
       const expected = createHmac('sha256', secret).update(`v1\n${timestamp}\n${sourceId}\n`, 'utf8').update(body).digest();
-      matched |= Number(timingSafeEqual(expected, actual));
+      matched |= Number(timingSafeEqualBuffers(expected, actual));
     }
     return matched ? { ...source.identity } : undefined;
   };

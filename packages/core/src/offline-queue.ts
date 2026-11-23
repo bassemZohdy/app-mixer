@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { CapabilityRegistry, CapabilityOutcomeUncertainError, type InvocationContext } from './capabilities.js';
 import { checkKey, dataCopy, type DataScope } from './data-provider.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { AppMixerError } from './errors.js';
 
 export type OfflineStatus = 'pending' | 'running' | 'conflict' | 'uncertain' | 'exhausted' | 'succeeded' | 'discarded';

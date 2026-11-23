@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { AgentRunScope } from './durable-runs.js';
 import type { AgentScheduleConfig } from './agent-schedules.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier, isNonNegativeInteger } from './validation.js';
 
 type Actor = { tenantId: string; principalId: string };

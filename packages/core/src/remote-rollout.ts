@@ -2,7 +2,7 @@ import { RemoteControlImportCancelledError, RemoteControlImportPreflightUnavaila
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import type { createRemoteControlConnector } from './remote-control-connector.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { AppMixerError } from './errors.js';
 
 type Actor = { tenantId: string; principalId: string };

@@ -1,4 +1,5 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -49,7 +50,7 @@ export function createTelegramWebhookAdapter(options: TelegramWebhookOptions) {
       if (!secret(received)) return undefined;
       const actual = digest(received);
       let matched = 0;
-      for (const hash of hashes) matched |= Number(timingSafeEqual(hash, actual));
+      for (const hash of hashes) matched |= Number(timingSafeEqualBuffers(hash, actual));
       return matched ? { ...fixed } : undefined;
     },
     mapAuthenticatedBody(body: Buffer): AgentEventRequest {

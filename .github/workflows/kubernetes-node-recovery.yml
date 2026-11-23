@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: '22.22.2'
       - name: Build trusted release fixture signer
-        run: npm ci && npm run build -w @app-mixer/web && npm run build -w @app-mixer/core
+        run: npm ci && npm run build -w @app-mixer/web && npm run build -w @app-mixer/shared && npm run build -w @app-mixer/core
       - name: Install verified kind
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64

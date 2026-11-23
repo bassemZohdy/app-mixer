@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { actionJSON } from './action-journal.js';
 import { type AgentRunScope } from './durable-runs.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier } from './validation.js';
 import { AgentError } from './errors.js';
 

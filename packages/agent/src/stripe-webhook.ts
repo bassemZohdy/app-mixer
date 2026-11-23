@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -67,7 +68,7 @@ export function createStripeWebhookAdapter(options: StripeWebhookOptions) {
           .update(timestamp + '.')
           .update(body)
           .digest();
-        for (const value of signatures) matched |= Number(timingSafeEqual(expected, value));
+        for (const value of signatures) matched |= Number(timingSafeEqualBuffers(expected, value));
       }
       return matched ? { ...fixed } : undefined;
     },

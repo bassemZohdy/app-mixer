@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -40,7 +41,7 @@ export function createShopifyWebhookAdapter(options: ShopifyWebhookOptions) {
       const actual = Buffer.from(signature, 'base64');
       if (actual.toString('base64') !== signature) return undefined;
       let matched = 0;
-      for (const key of secrets) matched |= Number(timingSafeEqual(createHmac('sha256', key).update(body).digest(), actual));
+      for (const key of secrets) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', key).update(body).digest(), actual));
       return matched ? { ...fixed } : undefined;
     },
     mapAuthenticatedBody(body: Buffer): AgentEventRequest {

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import type { JWTPayload } from 'jose';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isNonNegativeInteger } from './validation.js';
 const valid = (x: unknown, max = 256): x is string => typeof x === 'string' && x.trim().length > 0 && x.length <= max && !/[\x00-\x1f\x7f]/.test(x);
 const integer = isNonNegativeInteger;

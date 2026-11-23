@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import { Temporal } from '@js-temporal/polyfill';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
@@ -91,7 +92,7 @@ export function createNotionWebhookAdapter(options: NotionWebhookOptions) {
       if (!signature || !/^sha256=[a-f0-9]{64}$/.test(signature)) return undefined;
       const actual = Buffer.from(signature.slice(7), 'hex');
       let matched = 0;
-      for (const secret of keys) matched |= Number(timingSafeEqual(createHmac('sha256', secret).update(body).digest(), actual));
+      for (const secret of keys) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', secret).update(body).digest(), actual));
       if (!matched) return undefined;
       if (maxAgeMs !== undefined) {
         try {

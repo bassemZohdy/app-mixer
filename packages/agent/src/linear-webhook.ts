@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -77,7 +78,7 @@ export function createLinearWebhookAdapter(options: LinearWebhookOptions) {
       if (!header || !/^[a-f0-9]{64}$/.test(header)) return undefined;
       const actual = Buffer.from(header, 'hex');
       let matched = 0;
-      for (const key of keys) matched |= Number(timingSafeEqual(createHmac('sha256', key).update(body).digest(), actual));
+      for (const key of keys) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', key).update(body).digest(), actual));
       if (!matched) return undefined;
       try {
         const event = decode(body),

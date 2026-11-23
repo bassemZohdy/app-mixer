@@ -4,7 +4,7 @@ import { insertAgentTraceParent, parseAgentTraceParent } from './agent-trace-con
 import { Temporal } from '@js-temporal/polyfill';
 import { createHash, randomUUID } from 'node:crypto';
 import { SqliteAgentRuns, resumeAgentRunWithTriggerInTransaction, type AgentRunScope } from './durable-runs.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier, isNonNegativeInteger } from './validation.js';
 import { AgentError } from './errors.js';
 

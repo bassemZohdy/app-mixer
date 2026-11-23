@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { ensureAgentRunTerminalSchema } from './agent-run-terminal.js';
 import { ensureTriggerReceiptSchema } from './agent-trigger-receipts.js';
 import type { AgentRunScope } from './durable-runs.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier } from './validation.js';
 
 type Actor = { tenantId: string; principalId: string };

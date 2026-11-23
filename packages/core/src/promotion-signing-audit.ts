@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, type KeyObject } from 'node:crypto';
 import { signPromotionPackage, type SignedPromotionPackage, type PromotionSignatureEvidence } from './signed-promotion.js';
 import { validEnvironment, type PromotionPackage } from './promotion.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 
 export type PromotionSigningAuditEntry = {
   sequence: number;

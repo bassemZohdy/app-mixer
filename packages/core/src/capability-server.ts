@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type RequestListener, type Server, 
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { CapabilityRegistry, CapabilityOutcomeUncertainError } from './capabilities.js';
 import { traceHttp, type HttpServerTracingOptions } from './http-tracing.js';
+import { BodyReadError, readJsonBody } from '@app-mixer/shared';
 import { refusalStatus } from './errors.js';
 import { limitServer, TLS_POLICY } from './server-limits.js';
 
@@ -16,19 +17,11 @@ function reply(res: ServerResponse, status: number, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 async function body(req: IncomingMessage, maxRequestBytes: number): Promise<unknown> {
-  if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) throw Error('CONTENT_TYPE');
-  const parts: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const part = Buffer.from(chunk);
-    size += part.length;
-    if (size > maxRequestBytes) throw Error('TOO_LARGE');
-    parts.push(part);
-  }
   try {
-    return JSON.parse(Buffer.concat(parts).toString('utf8')) as unknown;
-  } catch {
-    throw Error('INVALID_JSON');
+    return await readJsonBody(req, { maxBytes: maxRequestBytes });
+  } catch (error) {
+    if (!(error instanceof BodyReadError)) throw error;
+    throw Error(error.reason === 'content-type' ? 'CONTENT_TYPE' : error.reason === 'too-large' ? 'TOO_LARGE' : 'INVALID_JSON');
   }
 }
 function createCapabilityHandler(

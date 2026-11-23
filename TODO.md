@@ -2,10 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **TASK-010** · P2 · mid · Share one copy of csp.ts and sqlite-open.ts (identical in core and agent), of the JSON body reader (8 inline copies) and of the bearer-token comparison (about 18 files)
-  - Done when: each helper has one definition, and a test caps the number of copies; `npm run build && node --test packages/cli/test/shared-helpers.test.mjs`
-  - Links: Depends: TASK-002
-  - State: next: decompose
 - [ ] **FEAT-017** · P2 · mid · Add a coverage report with a minimum threshold to CI; nothing measures coverage today and the mutation script is run by hand
   - Done when: the coverage command reports a figure per package and exits non-zero below the threshold; `npm run coverage`
 - [ ] **FEAT-018** · P2 · mid · Add a workflow that builds the Data Plane image, scans it for vulnerabilities and produces an SBOM; no workflow does this today

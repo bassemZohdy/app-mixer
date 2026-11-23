@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type RequestListener, type Server, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions as HttpsOptions } from 'node:https';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { bearerAuthorized, BodyReadError, inlineHashes, readJsonBody } from '@app-mixer/shared';
 import { limitServer, TLS_POLICY } from './server-limits.js';
 import { readFile } from 'node:fs/promises';
 import type { ApplicationDefinition, Component, Page, Patch, PublicationProvenance } from './index.js';
@@ -9,7 +10,6 @@ import { createPromotionPackage, validEnvironment, type PromotionPackage } from 
 import type { PromotionSignatureEvidence, VerifiedPromotion, SignedPromotionPackage } from './signed-promotion.js';
 import { DevelopmentProposals } from './proposals.js';
 import { DEVELOPMENT_UI } from './development-ui.js';
-import { inlineHashes } from './csp.js';
 // The page's inline script and style are allowed by hash, so the policy needs no 'unsafe-inline'.
 const DEVELOPMENT_UI_CSP = [
   "script-src 'self' " + inlineHashes(DEVELOPMENT_UI, 'script').join(' '),
@@ -101,18 +101,12 @@ export function isValidPatch(value: unknown): value is Patch {
   return false;
 }
 async function body(req: IncomingMessage): Promise<unknown> {
-  if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) throw new RequestError(415, 'Expected application/json');
-  const chunks: Buffer[] = [];
-  let length = 0;
-  for await (const chunk of req) {
-    const part = Buffer.from(chunk);
-    length += part.length;
-    if (length > 1024 * 1024) throw new RequestError(413, 'Request too large');
-    chunks.push(part);
-  }
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  } catch {
+    return await readJsonBody(req, { maxBytes: 1024 * 1024 });
+  } catch (error) {
+    if (!(error instanceof BodyReadError)) throw error;
+    if (error.reason === 'content-type') throw new RequestError(415, 'Expected application/json');
+    if (error.reason === 'too-large') throw new RequestError(413, 'Request too large');
     throw new RequestError(400, 'Invalid JSON');
   }
 }
@@ -121,9 +115,7 @@ function respond(res: ServerResponse, status: number, value: unknown): void {
   res.end(JSON.stringify(value));
 }
 function authorized(req: IncomingMessage, token: string): boolean {
-  const supplied = Buffer.from(req.headers.authorization ?? '');
-  const expected = Buffer.from(`Bearer ${token}`);
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+  return bearerAuthorized(req.headers.authorization, token);
 }
 function listener(handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>, dispatch?: (req: IncomingMessage, res: ServerResponse, run: () => void) => void): RequestListener {
   return (req, res) => {

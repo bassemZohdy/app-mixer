@@ -1,4 +1,5 @@
-import { createHash, timingSafeEqual, sign, verify, KeyObject } from 'node:crypto';
+import { createHash, sign, verify, KeyObject } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import { isValidExtensionReferences, type ApplicationDefinition, type ExtensionReference, type PublicationGuard } from './index.js';
 import { AppMixerError } from './errors.js';
 
@@ -58,7 +59,7 @@ export function verifyExtensionIntegrity(integrity: unknown, packageBytes: Uint8
   if (typeof integrity !== 'string' || !validIntegrity(integrity)) return false;
   const expected = Buffer.from(integrity.slice(7), 'base64'),
     actual = Buffer.from(computeExtensionIntegrity(packageBytes).slice(7), 'base64');
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
+  return timingSafeEqualBuffers(expected, actual);
 }
 const record = (x: unknown): x is Record<string, unknown> =>
   x !== null && typeof x === 'object' && !Array.isArray(x) && (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);

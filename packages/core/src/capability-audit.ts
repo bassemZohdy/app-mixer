@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { CapabilityAuditEvent } from './capabilities.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isNonNegativeInteger } from './validation.js';
 
 export type StoredCapabilityAuditEvent = CapabilityAuditEvent & { sequence: number; recordedAt: number };

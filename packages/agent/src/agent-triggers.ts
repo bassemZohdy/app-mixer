@@ -4,7 +4,7 @@ import { ensureTriggerReceiptSchema } from './agent-trigger-receipts.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { SqliteAgentRuns, type AgentRunScope } from './durable-runs.js';
 import { insertAgentTraceParent, parseAgentTraceParent } from './agent-trace-context.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier } from './validation.js';
 import { AgentError } from './errors.js';
 

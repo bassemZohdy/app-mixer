@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AgentNoticeMessage } from './agent-notice-delivery.js';
 import type { AgentRunScope } from './durable-runs.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase, readJsonBody } from '@app-mixer/shared';
 import { isIdentifier, isNonNegativeInteger } from './validation.js';
 import { limitServer, guard } from './server-limits.js';
 
@@ -291,15 +291,7 @@ export function createAgentNoticeReceiverServer(options: ServerOptions): Server 
         }
         let payload: unknown;
         try {
-          const parts: Buffer[] = [];
-          let size = 0;
-          for await (const chunk of req) {
-            const part = Buffer.from(chunk);
-            size += part.length;
-            if (size > 8192) throw Error('large');
-            parts.push(part);
-          }
-          payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(parts)));
+          payload = await readJsonBody(req, { maxBytes: 8192 });
         } catch {
           reply(res, 400);
           return;

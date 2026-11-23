@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -45,7 +46,7 @@ export function createSentryWebhookAdapter(options: SentryWebhookOptions) {
       if (!signature || !/^[a-f0-9]{64}$/.test(signature)) return undefined;
       const actual = Buffer.from(signature, 'hex');
       let matched = 0;
-      for (const key of keys) matched |= Number(timingSafeEqual(createHmac('sha256', key).update(body).digest(), actual));
+      for (const key of keys) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', key).update(body).digest(), actual));
       if (!matched) return undefined;
       // Only the signed body is trusted: the installation is checked after the signature verifies.
       let payload: Record<string, unknown>;

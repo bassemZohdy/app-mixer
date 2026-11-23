@@ -25,6 +25,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@app-mixer/shared": "0.1.0",
     "@app-mixer/web": "0.1.0",
     "@opentelemetry/api": "1.10.0",
     "ajv": "^8.20.0",

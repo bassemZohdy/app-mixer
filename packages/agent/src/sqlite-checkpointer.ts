@@ -13,7 +13,7 @@ import {
 } from '@langchain/langgraph-checkpoint';
 import { type RunnableConfig } from '@langchain/core/runnables';
 import { type AgentRunScope } from './durable-runs.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 
 type Options = { scope: AgentRunScope; runId: string; leaseToken: string; clock?: () => number };
 const valid = (value: unknown, empty = false): value is string => typeof value === 'string' && (empty || value.length > 0) && value.length <= 1024 && !/[\u0000-\u001f]/.test(value);

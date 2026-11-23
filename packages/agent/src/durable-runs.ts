@@ -5,7 +5,7 @@ import { ensureAgentTraceSchema, insertAgentTraceParent, parseAgentTraceParent }
 import { ensureAgentNoticeSchema, insertAgentNotice } from './agent-notices.js';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier, isNonNegativeInteger } from './validation.js';
 import { AgentError } from './errors.js';
 import { assertSchemaSupported, recordSchemaVersion } from './schema-version.js';

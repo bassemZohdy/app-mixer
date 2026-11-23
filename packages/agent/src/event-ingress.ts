@@ -8,6 +8,7 @@ import { type AgentDefinitionVersion } from './persistent-definitions.js';
 import { parseAgentTraceParent } from './agent-trace-context.js';
 import { ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, type Tracer, type Span } from '@opentelemetry/api';
 import { isIdentifier } from './validation.js';
+import { BodyReadError, readBodyBytes } from '@app-mixer/shared';
 import { agentErrorStatus } from './errors.js';
 import { limitServer, guard } from './server-limits.js';
 
@@ -55,16 +56,12 @@ const reply = (res: ServerResponse, status: number, body: unknown) => {
 async function readBytes(req: IncomingMessage, contentType?: Options['contentType']): Promise<Buffer> {
   if (req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === 'content-type').length !== 1) throw Error('CONTENT_TYPE');
   const expected = contentType === 'application/x-www-form-urlencoded' ? /^application\/x-www-form-urlencoded(?:\s*;|$)/i : /^application\/json(?:\s*;|$)/i;
-  if (!expected.test(req.headers['content-type'] ?? '')) throw Error('CONTENT_TYPE');
-  const parts: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const part = Buffer.from(chunk);
-    size += part.length;
-    if (size > 256 * 1024) throw Error('TOO_LARGE');
-    parts.push(part);
+  try {
+    return await readBodyBytes(req, { maxBytes: 256 * 1024, contentType: expected });
+  } catch (error) {
+    if (!(error instanceof BodyReadError)) throw error;
+    throw Error(error.reason === 'too-large' ? 'TOO_LARGE' : 'CONTENT_TYPE');
   }
-  return Buffer.concat(parts);
 }
 function parse(raw: Buffer): EventRequest {
   let value: unknown;

@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -81,7 +82,7 @@ export function createGitlabWebhookAdapter(options: GitlabWebhookOptions) {
           .update(messageId + '.' + timestamp + '.', 'utf8')
           .update(body)
           .digest();
-        for (const signature of signatures) matched |= Number(timingSafeEqual(expected, signature));
+        for (const signature of signatures) matched |= Number(timingSafeEqualBuffers(expected, signature));
       }
       if (!matched) return undefined;
       verified.set(req, { eventId: messageId, digest: createHash('sha256').update(body).digest('hex') });

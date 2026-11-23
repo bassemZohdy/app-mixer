@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -70,7 +71,7 @@ export function createSlackWebhookAdapter(options: SlackWebhookOptions) {
       if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(seconds) || Math.abs(Math.floor(now / 1000) - seconds) > tolerance) return undefined;
       const actual = Buffer.from(signature.slice(3), 'hex');
       let matched = 0;
-      for (const key of keys) matched |= Number(timingSafeEqual(createHmac('sha256', key).update(`v0:${timestamp}:`, 'utf8').update(body).digest(), actual));
+      for (const key of keys) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', key).update(`v0:${timestamp}:`, 'utf8').update(body).digest(), actual));
       return matched ? { ...fixed } : undefined;
     },
     challengeAuthenticatedBody(body: Buffer): string | undefined {

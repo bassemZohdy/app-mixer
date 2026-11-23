@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import { Temporal } from '@js-temporal/polyfill';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
@@ -90,7 +91,7 @@ export function createSquareWebhookAdapter(options: SquareWebhookOptions) {
       const actual = Buffer.from(signature, 'base64');
       if (actual.toString('base64') !== signature) return undefined;
       let matched = 0;
-      for (const secret of keys) matched |= Number(timingSafeEqual(createHmac('sha256', secret).update(notificationUrl, 'utf8').update(body).digest(), actual));
+      for (const secret of keys) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', secret).update(notificationUrl, 'utf8').update(body).digest(), actual));
       if (!matched) return undefined;
       if (maxAgeMs !== undefined) {
         try {

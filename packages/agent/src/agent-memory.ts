@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { isIdentifier } from './validation.js';
 
 type MemoryScope = { tenantId: string; agentId: string; owner: { kind: 'organization' | 'team' | 'application' | 'user'; id: string }; kind: 'session' | 'semantic' | 'episodic' | 'procedural' };

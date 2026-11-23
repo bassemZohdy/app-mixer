@@ -1,4 +1,5 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -38,7 +39,7 @@ export function createGithubWebhookAdapter(options: GithubWebhookOptions) {
       if (!signature || !/^sha256=[a-f0-9]{64}$/.test(signature)) return undefined;
       const actual = Buffer.from(signature.slice(7), 'hex');
       let matched = 0;
-      for (const key of secrets) matched |= Number(timingSafeEqual(createHmac('sha256', key).update(body).digest(), actual));
+      for (const key of secrets) matched |= Number(timingSafeEqualBuffers(createHmac('sha256', key).update(body).digest(), actual));
       return matched ? { ...fixed } : undefined;
     },
     mapAuthenticatedBody(body: Buffer): AgentEventRequest {

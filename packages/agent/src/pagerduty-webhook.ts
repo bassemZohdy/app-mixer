@@ -1,4 +1,5 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac } from 'node:crypto';
+import { timingSafeEqualBuffers } from '@app-mixer/shared';
 import type { IncomingMessage } from 'node:http';
 import type { AgentEventSourceIdentity, AgentEventRequest } from './event-ingress.js';
 import { isIdentifier } from './validation.js';
@@ -42,7 +43,7 @@ export function createPagerDutyWebhookAdapter(options: PagerDutyWebhookOptions) 
       let matched = 0;
       for (const part of parts) {
         const actual = Buffer.from(part.slice(3), 'hex');
-        for (const digest of expected) matched |= Number(timingSafeEqual(digest, actual));
+        for (const digest of expected) matched |= Number(timingSafeEqualBuffers(digest, actual));
       }
       return matched ? { ...fixed } : undefined;
     },

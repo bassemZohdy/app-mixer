@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DatabaseSync } from 'node:sqlite';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/);
 const unique = (items: string[]) => new Set(items).size === items.length;

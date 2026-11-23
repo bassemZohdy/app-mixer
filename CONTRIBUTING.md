@@ -1,6 +1,6 @@
 # Contributing
 
-App Mixer is a Node.js workspace (`packages/*`); the adapters under `adapters/` (Angular, Flutter) are standalone and are not installed by the root `npm ci`. Use Node 22.22.2 or later (`.nvmrc` pins 22; CI also runs 22.22.2 and 24).
+App Mixer is a Node.js workspace (`packages/*`); the adapters under `adapters/` (Angular, Flutter) are standalone and are not installed by the root `npm ci`. Use Node 22.22.2 or later (`.nvmrc` pins 22; CI also runs 22.22.2 and 24). The dependency-free `@app-mixer/shared` workspace holds the helpers `core` and `agent` share (the CSP inline-hash helper, the SQLite opener, the JSON request-body reader and the timing-safe comparisons); add cross-package helpers there instead of copying them.
 
 ## Build and test
 

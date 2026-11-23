@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { checkPromotionPackage, createPromotionPackage, validEnvironment } from './promotion.js';
 import { checkPromotionEvidence, type PromotionSignatureEvidence } from './signed-promotion.js';
 import { ApplicationStore, validate, enforcePublicationGuard, definitionSha256, type ApplicationDefinition, type Patch, type PublicationGuard, type PublicationProvenance } from './index.js';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { AppMixerError } from './errors.js';
 import { validatePublishable } from './component-validation.js';
 

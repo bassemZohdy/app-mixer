@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { openDatabase } from './sqlite-open.js';
+import { openDatabase } from '@app-mixer/shared';
 import { AppMixerError } from './errors.js';
 
 export type DataScope = { tenantId: string; applicationId: string };

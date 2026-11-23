@@ -47,6 +47,7 @@
   },
   "dependencies": {
     "@ag-ui/core": "^1.0.3",
+    "@app-mixer/shared": "0.1.0",
     "@js-temporal/polyfill": "^0.5.1",
     "@langchain/core": "^1.3.1",
     "@langchain/langgraph": "^1.5.3",

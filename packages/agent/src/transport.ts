@@ -1,8 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { limitServer } from './server-limits.js';
 import { RunAgentInputSchema } from '@ag-ui/core/schemas';
+import { bearerAuthorized, BodyReadError, readJsonBody } from '@app-mixer/shared';
 import { validateRunInput, type LangGraphAGUIAdapter, type RunInput } from './index.js';
 import { traceAgent, type AgentTransportTracingOptions } from './transport-tracing.js';
 
@@ -11,24 +11,14 @@ function reply(res: ServerResponse, status: number, error: string): void {
   res.end(JSON.stringify({ error }));
 }
 function isAuthorized(req: IncomingMessage, token: string): boolean {
-  const expected = Buffer.from(`Bearer ${token}`),
-    received = Buffer.from(req.headers.authorization ?? '');
-  return expected.length === received.length && timingSafeEqual(expected, received);
+  return bearerAuthorized(req.headers.authorization, token);
 }
 async function readBody(req: IncomingMessage): Promise<unknown> {
-  if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) throw Error('CONTENT_TYPE');
-  let size = 0;
-  const parts: Buffer[] = [];
-  for await (const chunk of req) {
-    const part = Buffer.from(chunk);
-    size += part.length;
-    if (size > 1024 * 1024) throw Error('TOO_LARGE');
-    parts.push(part);
-  }
   try {
-    return JSON.parse(Buffer.concat(parts).toString('utf8')) as unknown;
-  } catch {
-    throw Error('INVALID_JSON');
+    return await readJsonBody(req, { maxBytes: 1024 * 1024 });
+  } catch (error) {
+    if (!(error instanceof BodyReadError)) throw error;
+    throw Error(error.reason === 'content-type' ? 'CONTENT_TYPE' : error.reason === 'too-large' ? 'TOO_LARGE' : 'INVALID_JSON');
   }
 }
 function parseInput(raw: unknown): RunInput {
