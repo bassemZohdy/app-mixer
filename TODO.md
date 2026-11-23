@@ -2,10 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **TASK-007** · P1 · low · Adopt a formatter with a CI check and reformat packages, templates, deploy and scripts; source lines now reach 5,687 characters and average 141
-  - Done when: the format check passes, and a test fails on any source line over 200 characters; `node --test packages/cli/test/source-format.test.mjs`
-  - Links: Depends: TASK-002
-  - State: next: decompose
 - [ ] **TASK-008** · P2 · mid · Move the generated server, page, chat and workspace sources out of String.raw literals in packages/cli/src/index.ts into packages/cli/templates so they can be linted and syntax-checked
   - Done when: createProject writes the same files byte for byte as before, and each template passes a syntax check; `npm run build && node --test packages/cli/test/create.test.mjs`
   - State: next: decompose
