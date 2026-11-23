@@ -2,10 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **TASK-019** · P2 · mid · Make the Kubernetes base manifest secure by default (signed publication, JWT access, TLS, no test image tag) and move the open variant to a named example overlay
-  - Done when: the rendered base contains no unsigned, public or http setting, and the open overlay is the only place they appear; `node --test packages/cli/test/kubernetes-base-defaults.test.mjs`
-  - Links: Ref: docs/kubernetes-data-plane.md
-  - State: next: decompose
 - [ ] **TASK-020** · P2 · mid · Enable noUncheckedIndexedAccess, noImplicitOverride, noFallthroughCasesInSwitch and exactOptionalPropertyTypes in tsconfig.base.json and fix what they report
   - Done when: every workspace compiles with the four flags on; `npm run build`
   - State: next: decompose

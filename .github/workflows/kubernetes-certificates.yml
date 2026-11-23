@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the workspace for release signing
+        run: npm ci && npm run build -w @app-mixer/web -w @app-mixer/shared -w @app-mixer/core
       - name: Install verified kind
         run: |
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
@@ -30,7 +32,7 @@ jobs:
       - name: Start cluster and load the Data Plane image
         run: |
           kind create cluster --name cert-rotation
-          docker build -f Dockerfile.data-plane -t app-mixer-data-plane:test .
-          kind load docker-image app-mixer-data-plane:test --name cert-rotation
+          docker build -f Dockerfile.data-plane -t app-mixer-data-plane:0.1.0 .
+          kind load docker-image app-mixer-data-plane:0.1.0 --name cert-rotation
       - name: Issue, renew and rotate the certificate with cert-manager
         run: bash deploy/kubernetes/test-support/cert-rotation.sh

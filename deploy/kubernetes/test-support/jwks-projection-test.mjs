@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { SignJWT } from 'jose';
 
 const namespace = 'app-mixer-jwks-' + randomUUID().slice(0, 8),
-  image = process.env.APP_MIXER_TEST_IMAGE ?? 'app-mixer-data-plane:test',
+  image = process.env.APP_MIXER_TEST_IMAGE ?? 'app-mixer-data-plane:0.1.0',
   now = Math.floor(Date.now() / 1000),
   first = generateKeyPairSync('rsa', { modulusLength: 2048 }),
   second = generateKeyPairSync('rsa', { modulusLength: 2048 });

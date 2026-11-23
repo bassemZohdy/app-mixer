@@ -1,0 +1,45 @@
+# TASK-019: the open variant (unsigned publication, unauthenticated access, plain HTTP) is opt-in and lives only here.
+# The secure base serves a signed publication over TLS with JWT access; this overlay peels all of that back for a local,
+# trusted kind cluster. The release keys, JWT key set and TLS certificate the base mounts are removed with it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../data-plane
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: app-mixer-data-plane
+      spec:
+        template:
+          spec:
+            containers:
+              - name: data-plane
+                env:
+                  - { name: APP_MIXER_PUBLICATION_MODE, value: unsigned }
+                  - { name: APP_MIXER_ACCESS_MODE, value: public }
+                  - { name: APP_MIXER_TRANSPORT, value: http }
+                  - { name: APP_MIXER_RELEASE_ENV, $patch: delete }
+                  - { name: APP_MIXER_APPLICATION_ID, $patch: delete }
+                  - { name: APP_MIXER_RELEASE_KEYS_PATH, $patch: delete }
+                  - { name: APP_MIXER_JWKS_PATH, $patch: delete }
+                  - { name: APP_MIXER_JWT_ISSUER, $patch: delete }
+                  - { name: APP_MIXER_JWT_AUDIENCE, $patch: delete }
+                  - { name: APP_MIXER_TENANT_ID, $patch: delete }
+                  - { name: APP_MIXER_TLS_CERT_PATH, $patch: delete }
+                  - { name: APP_MIXER_TLS_KEY_PATH, $patch: delete }
+                readinessProbe:
+                  httpGet: { scheme: HTTP }
+                livenessProbe:
+                  httpGet: { scheme: HTTP }
+                startupProbe:
+                  httpGet: { scheme: HTTP }
+                volumeMounts:
+                  - { mountPath: /trust, $patch: delete }
+                  - { mountPath: /jwt-trust, $patch: delete }
+                  - { mountPath: /tls, $patch: delete }
+            volumes:
+              - { name: release-trust, $patch: delete }
+              - { name: jwt-trust, $patch: delete }
+              - { name: tls, $patch: delete }

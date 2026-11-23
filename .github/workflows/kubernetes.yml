@@ -38,12 +38,12 @@ jobs:
       - name: Start cluster and load image
         run: |
           kind create cluster --name app-mixer
-          docker build -f Dockerfile.data-plane -t app-mixer-data-plane:test .
+          docker build -f Dockerfile.data-plane -t app-mixer-data-plane:0.1.0 .
           # The image carries only the core and web workspaces (about 330 MB with the base image); fail on unnoticed growth.
-          size=$(docker image inspect app-mixer-data-plane:test --format '{{.Size}}')
+          size=$(docker image inspect app-mixer-data-plane:0.1.0 --format '{{.Size}}')
           echo "Data Plane image: $size bytes"
           test "$size" -le 400000000
-          kind load docker-image app-mixer-data-plane:test --name app-mixer
+          kind load docker-image app-mixer-data-plane:0.1.0 --name app-mixer
       - name: Verify mounted JWT key rotation across replicas
         run: node deploy/kubernetes/test-support/jwks-projection-test.mjs
       - name: Verify rollout, replacement and pod recovery
@@ -96,7 +96,7 @@ jobs:
           POD_IP=$(ready_pod_ip)
           [ -n "$POD_IP" ]
           METRICS_TOKEN=$(node -p 'JSON.parse(require("node:fs").readFileSync(process.env.RUNNER_TEMP+"/metrics-input.json","utf8")).metrics')
-          scrape() { kubectl run "$1" -n app-mixer-test --rm -i --restart=Never --image-pull-policy=Never --image=app-mixer-data-plane:test --labels="$2" --env="T=$3" --env="U=http://$POD_IP:39092/metrics" --command -- node -e 'fetch(process.env.U,{headers:process.env.T?{authorization:"Bearer "+process.env.T}:{},signal:AbortSignal.timeout(8000)}).then(r=>{console.log("status "+r.status);process.exit(r.status===200?0:3)},()=>{console.log("unreachable");process.exit(2)})'; }
+          scrape() { kubectl run "$1" -n app-mixer-test --rm -i --restart=Never --image-pull-policy=Never --image=app-mixer-data-plane:0.1.0 --labels="$2" --env="T=$3" --env="U=http://$POD_IP:39092/metrics" --command -- node -e 'fetch(process.env.U,{headers:process.env.T?{authorization:"Bearer "+process.env.T}:{},signal:AbortSignal.timeout(8000)}).then(r=>{console.log("status "+r.status);process.exit(r.status===200?0:3)},()=>{console.log("unreachable");process.exit(2)})'; }
           # The NetworkPolicy was created a moment ago; a CNI can take a few seconds to program it, so the permitted scrape is retried.
           for attempt in 1 2 3 4; do
             POD_IP=$(ready_pod_ip)

@@ -6,7 +6,8 @@
 #   3. a client with a CA bundle (old and new CA) keeps verifying before, during and after the issuer changes,
 #      a client with only the old CA stops verifying once the leaf comes from the new CA, and one with only the new CA
 #      verifies.
-# Needs kubectl on a cluster that has the app-mixer-data-plane:test image, openssl and bash.
+# Needs kubectl on a cluster that has the app-mixer-data-plane image, openssl and bash, and a workspace with
+# @app-mixer/core built (the script signs the publication the secure base verifies).
 set -eu
 ns=app-mixer-test
 dir=deploy/kubernetes
@@ -21,6 +22,15 @@ k() { kubectl -n "$ns" "$@"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
+# TASK-019: the base serves a signed publication over TLS with JWT access, so the cluster needs a release trust set,
+# a JWT key set and a signed publication before the deployment can start.
+WORK="$work" node -e 'const {generateKeyPairSync}=require("node:crypto"),fs=require("node:fs"),k=generateKeyPairSync("ed25519");fs.writeFileSync(process.env.WORK+"/private.pem",k.privateKey.export({type:"pkcs8",format:"pem"}));fs.writeFileSync(process.env.WORK+"/keys.json",JSON.stringify([{keyId:"ci",publicKey:k.publicKey.export({type:"spki",format:"pem"})}]))'
+WORK="$work" node --input-type=module -e 'import {generateKeyPairSync} from "node:crypto";import {writeFileSync} from "node:fs";const k=generateKeyPairSync("rsa",{modulusLength:2048});writeFileSync(process.env.WORK+"/jwks.json",JSON.stringify({keys:[{...k.publicKey.export({format:"jwk"}),kid:"ci",alg:"RS256",use:"sig"}]}))'
+kubectl -n "$ns" create configmap app-mixer-release-keys --from-file=keys.json="$work/keys.json"
+kubectl -n "$ns" create configmap app-mixer-jwt-keys --from-file=jwks.json="$work/jwks.json"
+cp deploy/kubernetes/data-plane/publication.json "$work/unsigned.json"
+node deploy/kubernetes/sign-publication.mjs "$work/unsigned.json" "$work/signed.json" "$work/private.pem" ci production
+cp "$work/signed.json" deploy/kubernetes/data-plane/publication.json
 kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/$version/cert-manager.yaml"
 for d in cert-manager cert-manager-cainjector cert-manager-webhook; do kubectl -n cert-manager rollout status "deployment/$d" --timeout=300s; done
 applied=false
