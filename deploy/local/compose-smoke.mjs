@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
@@ -16,7 +16,9 @@ const checkObservability = () =>
     'node',
     '-e',
     `(async()=>{const assert=require('node:assert/strict');assert.equal((await fetch('http://127.0.0.1:3002/health/ready')).status,200);assert.equal((await 
-      fetch('http://127.0.0.1:3004/metrics')).status,401);const r=await fetch('http://127.0.0.1:3004/metrics',{headers:{authorization:'Bearer '+process.env.DATA_METRICS_TOKEN}});assert.equal(r.status,200);assert.match(await r.text(),/app_mixer_data_plane_requests_total/);})().catch(e=>{console.error(e);process.exitCode=1})`
+      fetch('http://127.0.0.1:3004/metrics')).status,401);
+      const r=await fetch('http://127.0.0.1:3004/metrics',{headers:{authorization:'Bearer '+process.env.DATA_METRICS_TOKEN}});assert.equal(r.status,200);
+      assert.match(await r.text(),/app_mixer_data_plane_requests_total/);})().catch(e=>{console.error(e);process.exitCode=1})`
   );
 async function waitFor(url, headers = {}) {
   for (let i = 0; i < 60; i++) {

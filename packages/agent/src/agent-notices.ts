@@ -38,7 +38,8 @@ export function ensureAgentNoticeSchema(db: DatabaseSync): void {
    immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_notices_no_update BEFORE UPDATE ON agent_notices BEGIN SELECT RAISE(ABORT,'Notices are immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_notices_no_delete BEFORE DELETE ON agent_notices BEGIN SELECT RAISE(ABORT,'Notices are immutable'); END;
- CREATE TRIGGER IF NOT EXISTS agent_receipts_no_replace BEFORE INSERT ON agent_notice_receipts WHEN EXISTS(SELECT 1 FROM agent_notice_receipts WHERE notice_id=NEW.notice_id AND tenant_id=NEW.tenant_id 
+ CREATE TRIGGER IF NOT EXISTS agent_receipts_no_replace BEFORE INSERT ON agent_notice_receipts WHEN EXISTS(SELECT 1 FROM agent_notice_receipts WHERE notice_id=NEW.notice_id AND 
+   tenant_id=NEW.tenant_id 
    AND agent_id=NEW.agent_id AND principal_id=NEW.principal_id) BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_receipts_no_update BEFORE UPDATE ON agent_notice_receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;
  CREATE TRIGGER IF NOT EXISTS agent_receipts_no_delete BEFORE DELETE ON agent_notice_receipts BEGIN SELECT RAISE(ABORT,'Receipts are immutable'); END;`);

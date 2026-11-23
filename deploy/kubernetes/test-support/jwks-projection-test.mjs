@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+﻿import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SignJWT } from 'jose';
@@ -15,7 +15,10 @@ const token = (pair, kid, scope) =>
     .setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid })
     .sign(pair.privateKey);
 const probeScript = `const http=require('node:http');let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const input=JSON.parse(s);const call=(port,path,token)=>new Promise((resolve,
-  reject)=>{const r=http.get({host:'127.0.0.1',port,path,headers:token?{authorization:'Bearer '+token}:{}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});r.on('error',reject);r.setTimeout(3000,()=>r.destroy(Error('timeout')));});Promise.all([call(3002,'/application',input.old),call(3002,'/application',input.next),call(39092,'/metrics',input.metrics),call(3002,'/health/ready'),call(3002,'/health/live')]).then(values=>process.stdout.write(JSON.stringify(values)),()=>process.exit(1));});`;
+  reject)=>{const r=http.get({host:'127.0.0.1',port,path,headers:token?{authorization:'Bearer '+token}:{}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});
+    r.on('error',reject);r.setTimeout(3000,()=>r.destroy(Error('timeout')));});
+  Promise.all([call(3002,'/application',input.old),call(3002,'/application',input.next),call(39092,'/metrics',input.metrics),
+    call(3002,'/health/ready'),call(3002,'/health/live')]).then(values=>process.stdout.write(JSON.stringify(values)),()=>process.exit(1));});`;
 let created = false;
 try {
   const old = await token(first, 'first', 'app-mixer:publication.read'),

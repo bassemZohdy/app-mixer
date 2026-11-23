@@ -39,13 +39,16 @@ export class SqliteRemoteRollout {
     this.db = openDatabase(path);
     try {
       this.db
-        .exec(`PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS remote_rollouts (id TEXT PRIMARY KEY, phase TEXT NOT NULL CHECK(phase IN ('idle','running','importing','uncertain')), token TEXT, source_version INTEGER, expected_version INTEGER);
-   CREATE TABLE IF NOT EXISTS remote_rollout_recovery_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT NULL,
+        .exec(`PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS remote_rollouts (id TEXT PRIMARY KEY, phase TEXT NOT NULL CHECK(phase IN ('idle','running','importing','uncertain')), token TEXT, 
+          source_version INTEGER, expected_version INTEGER);
+   CREATE TABLE IF NOT EXISTS remote_rollout_recovery_events (event_id INTEGER PRIMARY KEY AUTOINCREMENT,rollout_id TEXT NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,phase TEXT NOT 
+     NULL,
      source_version INTEGER,expected_version INTEGER,observed_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS remote_rollout_recovery_scope ON remote_rollout_recovery_events(rollout_id,event_id);
    CREATE TRIGGER IF NOT EXISTS remote_rollout_recovery_no_update BEFORE UPDATE ON remote_rollout_recovery_events BEGIN SELECT RAISE(ABORT,'Recovery evidence is immutable'); END;
    CREATE TRIGGER IF NOT EXISTS remote_rollout_recovery_no_delete BEFORE DELETE ON remote_rollout_recovery_events BEGIN SELECT RAISE(ABORT,'Recovery evidence is immutable'); END;
-   CREATE TRIGGER IF NOT EXISTS remote_rollout_recovery_no_replace BEFORE INSERT ON remote_rollout_recovery_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM remote_rollout_recovery_events WHERE event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Recovery evidence is immutable'); END;`);
+   CREATE TRIGGER IF NOT EXISTS remote_rollout_recovery_no_replace BEFORE INSERT ON remote_rollout_recovery_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM remote_rollout_recovery_events WHERE 
+     event_id=NEW.event_id) BEGIN SELECT RAISE(ABORT,'Recovery evidence is immutable'); END;`);
       this.db.prepare("INSERT OR IGNORE INTO remote_rollouts(id,phase) VALUES (?,'idle')").run(this.key);
     } catch (error) {
       this.db.close();

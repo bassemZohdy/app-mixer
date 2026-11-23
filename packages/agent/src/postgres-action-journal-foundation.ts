@@ -164,7 +164,8 @@ export class PostgresAgentActionJournalFoundation {
       );
       await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_action_reconciliation_scope ON app_mixer_shared_action_reconciliations(tenant_id,agent_id,run_id,id)', []);
       await query(
-        "CREATE OR REPLACE FUNCTION app_mixer_shared_action_reconciliation_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Shared action reconciliation history is immutable'; END $$",
+        'CREATE OR REPLACE FUNCTION app_mixer_shared_action_reconciliation_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN ' +
+          "RAISE EXCEPTION 'Shared action reconciliation history is immutable'; END $$",
         []
       );
       await query(

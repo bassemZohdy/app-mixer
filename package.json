@@ -12,6 +12,8 @@
     "docs": "node scripts/docs-index.mjs",
     "local": "npm run build && node scripts/local-stack.mjs",
     "lint": "eslint \"packages/*/src/**/*.ts\"",
+    "format": "prettier --write packages deploy scripts",
+    "format:check": "prettier --check packages deploy scripts",
     "previews": "node scripts/sync-editor-previews.mjs"
   },
   "engines": {

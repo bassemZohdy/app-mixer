@@ -52,7 +52,8 @@ export class SqliteAgentDelegations {
       this.db.exec(`PRAGMA busy_timeout=5000;
    CREATE TABLE IF NOT EXISTS agent_delegations (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,
      expires_at INTEGER NOT NULL,revision INTEGER NOT NULL,revoked INTEGER NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id,grant_id));
-   CREATE TABLE IF NOT EXISTS agent_delegation_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision INTEGER NOT NULL,
+   CREATE TABLE IF NOT EXISTS agent_delegation_events (event_id INTEGER PRIMARY KEY,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,revision INTEGER NOT 
+     NULL,
      event TEXT NOT NULL,actor_id TEXT NOT NULL,principal_id TEXT NOT NULL,permission_version TEXT NOT NULL,expires_at INTEGER NOT NULL,event_at INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS delegation_events_scope_page ON agent_delegation_events(tenant_id,agent_id,run_id,grant_id,event_id);
    CREATE TRIGGER IF NOT EXISTS delegation_events_no_replace BEFORE INSERT ON agent_delegation_events WHEN NEW.event_id>0 AND EXISTS(SELECT 1 FROM agent_delegation_events WHERE event_id=NEW.event_id) 

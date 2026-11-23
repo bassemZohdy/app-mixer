@@ -29,7 +29,8 @@ const integer = isNonNegativeInteger;
 export function ensureAgentRunHistory(db: DatabaseSync): void {
   db.exec(`
  CREATE TABLE IF NOT EXISTS agent_run_events (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,revision INTEGER NOT NULL,
-   previous_status TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL,definition_version INTEGER NOT NULL,worker_id TEXT,archived INTEGER NOT NULL,wait_kind TEXT,wait_subject TEXT,observed_at INTEGER 
+   previous_status TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL,definition_version INTEGER NOT NULL,worker_id TEXT,archived INTEGER NOT NULL,wait_kind TEXT,wait_subject TEXT,observed_at 
+     INTEGER 
      NOT NULL);
  CREATE INDEX IF NOT EXISTS agent_run_events_scope ON agent_run_events(tenant_id,agent_id,id);
  CREATE TRIGGER IF NOT EXISTS agent_run_events_no_replace BEFORE INSERT ON agent_run_events WHEN NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_events WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Run 
@@ -44,7 +45,8 @@ export function ensureAgentRunHistory(db: DatabaseSync): void {
  CREATE TRIGGER IF NOT EXISTS agent_runs_capture_update AFTER UPDATE ON agent_runs WHEN NEW.status<>OLD.status OR NEW.archived<>OLD.archived OR NEW.attempts<>OLD.attempts OR NEW.lease_owner IS NOT 
    OLD.lease_owner OR NEW.lease_token IS NOT OLD.lease_token OR NEW.definition_version<>OLD.definition_version BEGIN
   INSERT INTO agent_run_events (tenant_id,agent_id,run_id,kind,revision,previous_status,status,attempts,definition_version,worker_id,archived,wait_kind,wait_subject,observed_at)
-  VALUES (NEW.tenant_id,NEW.agent_id,NEW.run_id,CASE WHEN NEW.archived<>OLD.archived THEN 'archived' WHEN NEW.status<>OLD.status THEN 'transition' ELSE 'updated' END,NEW.revision,OLD.status,NEW.status,
+  VALUES (NEW.tenant_id,NEW.agent_id,NEW.run_id,CASE WHEN NEW.archived<>OLD.archived THEN 'archived' WHEN NEW.status<>OLD.status THEN 'transition' ELSE 'updated' END,NEW.revision,OLD.status,
+    NEW.status,
     NEW.attempts,NEW.definition_version,COALESCE(NEW.lease_owner,OLD.lease_owner),NEW.archived,
    CASE WHEN NEW.status='paused' AND EXISTS(SELECT 1 FROM agent_approval_waits WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) THEN 'approval' WHEN NEW.status='paused' 
      AND EXISTS(SELECT 1 FROM agent_delegation_waits WHERE tenant_id=NEW.tenant_id AND agent_id=NEW.agent_id AND run_id=NEW.run_id) THEN 'delegation' ELSE NULL END,

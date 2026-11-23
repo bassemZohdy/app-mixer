@@ -678,7 +678,8 @@ export class PostgresAgentMemory {
     const rows = (
       await this.options.query(
         `SELECT memory_id,revision,ts_rank(to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')),plainto_tsquery('simple'::regconfig,$7)) AS score FROM app_mixer_agent_memories WHERE 
-          ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=$8 AND to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$7) ORDER BY score DESC,memory_id LIMIT $9`,
+          ${scopeWhere} AND memory_kind='semantic' AND NOT deleted AND expires_at>$6 AND value::jsonb->>'format'='semantic-v1' AND value::jsonb->>'modelId'=$8 AND to_tsvector('simple'::regconfig,
+            COALESCE(value::jsonb->>'text','')) @@ plainto_tsquery('simple'::regconfig,$7) ORDER BY score DESC,memory_id LIMIT $9`,
         [...this.args(c.scope), this.now(), text, modelId, maxCandidates]
       )
     ).rows;

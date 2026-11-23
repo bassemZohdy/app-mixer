@@ -73,6 +73,9 @@ jobs:
       # Unawaited promises, promises passed where a value is expected, unused variables (see eslint.config.mjs).
       - run: npm run lint
         if: matrix.node == '22'
+      # Prettier layout for packages, templates, deploy and scripts; the 200-column source limit runs inside npm test.
+      - run: npm run format:check
+        if: matrix.node == '22'
       - run: npm test
       - run: npm run build
       # The container tests pull pinned images; cache them keyed by the image list so registry limits and pull time stay out of the run.

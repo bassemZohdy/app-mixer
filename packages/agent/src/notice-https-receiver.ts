@@ -79,7 +79,8 @@ export class SqliteAgentNoticeReceiver {
        END;
    CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_update BEFORE UPDATE ON received_agent_notice_acks BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;
    CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_delete BEFORE DELETE ON received_agent_notice_acks BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;
-   CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_replace BEFORE INSERT ON received_agent_notice_acks WHEN EXISTS(SELECT 1 FROM received_agent_notice_acks WHERE notice_id=NEW.notice_id) BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;`);
+   CREATE TRIGGER IF NOT EXISTS received_agent_notice_acks_no_replace BEFORE INSERT ON received_agent_notice_acks WHEN EXISTS(SELECT 1 FROM received_agent_notice_acks WHERE notice_id=NEW.notice_id) 
+     BEGIN SELECT RAISE(ABORT,'Notice acknowledgements are immutable'); END;`);
     } catch (error) {
       this.db.close();
       throw error;

@@ -258,7 +258,8 @@ export class SqliteAgentRuns {
       immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_update BEFORE UPDATE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
   CREATE TRIGGER IF NOT EXISTS agent_run_expiry_audit_no_delete BEFORE DELETE ON agent_run_expiry_audit BEGIN SELECT RAISE(ABORT,'Expiry audit is immutable'); END;
-  CREATE TABLE IF NOT EXISTS agent_run_wakeups (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT NOT 
+  CREATE TABLE IF NOT EXISTS agent_run_wakeups (id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,source_id TEXT NOT NULL,event_id TEXT NOT NULL,principal_id TEXT 
+    NOT 
     NULL,event_type TEXT NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL,run_id TEXT NOT NULL,observed_at INTEGER NOT NULL,UNIQUE(tenant_id,agent_id,source_id,event_id));
   CREATE INDEX IF NOT EXISTS agent_run_wakeups_by_run ON agent_run_wakeups(tenant_id,agent_id,run_id,id);
   CREATE TRIGGER IF NOT EXISTS agent_run_wakeups_no_replace BEFORE INSERT ON agent_run_wakeups WHEN (NEW.id>0 AND EXISTS(SELECT 1 FROM agent_run_wakeups WHERE id=NEW.id)) OR EXISTS(SELECT 1 FROM 
@@ -283,7 +284,10 @@ export class SqliteAgentRuns {
       this.db.exec('BEGIN IMMEDIATE');
       try {
         this.db.exec(`DROP TRIGGER IF EXISTS agent_run_wakeups_no_update;
-   CREATE TRIGGER agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups WHEN NOT (NEW.id IS OLD.id AND NEW.tenant_id IS OLD.tenant_id AND NEW.agent_id IS OLD.agent_id AND NEW.source_id IS OLD.source_id AND NEW.event_id IS OLD.event_id AND NEW.principal_id IS OLD.principal_id AND NEW.event_type IS OLD.event_type AND NEW.payload_hash IS OLD.payload_hash AND NEW.run_id IS OLD.run_id AND NEW.observed_at IS OLD.observed_at AND NEW.payload='null' AND EXISTS(SELECT 1 FROM agent_run_wakeup_redactions r WHERE r.wakeup_id=OLD.id AND r.tenant_id=OLD.tenant_id AND r.agent_id=OLD.agent_id)) BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;`);
+   CREATE TRIGGER agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups WHEN NOT (NEW.id IS OLD.id AND NEW.tenant_id IS OLD.tenant_id AND NEW.agent_id IS OLD.agent_id AND NEW.source_id IS 
+     OLD.source_id AND NEW.event_id IS OLD.event_id AND NEW.principal_id IS OLD.principal_id AND NEW.event_type IS OLD.event_type AND NEW.payload_hash IS OLD.payload_hash AND NEW.run_id IS OLD.run_id 
+       AND NEW.observed_at IS OLD.observed_at AND NEW.payload='null' AND EXISTS(SELECT 1 FROM agent_run_wakeup_redactions r WHERE r.wakeup_id=OLD.id AND r.tenant_id=OLD.tenant_id AND 
+         r.agent_id=OLD.agent_id)) BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;`);
         this.db.exec('COMMIT');
       } catch (error) {
         this.db.exec('ROLLBACK');

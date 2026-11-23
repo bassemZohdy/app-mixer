@@ -1,4 +1,4 @@
-import { isIdentifier, isNonNegativeInteger } from './validation.js';
+﻿import { isIdentifier, isNonNegativeInteger } from './validation.js';
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 type Actor = { tenantId: string; principalId: string };
 type Scope = { tenantId: string; budgetId: string; currency: string; maxMicros: number };
@@ -384,7 +384,8 @@ export class PostgresAgentSharedCost {
         await this.permit(who, 'reserve', selected);
         const rows = (
           await query(
-            `INSERT INTO app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved',${NOW}) RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at`,
+            `INSERT INTO app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved',${NOW}) 
+              RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at`,
             [...this.values(selected), reservedMicros]
           )
         ).rows;
@@ -598,7 +599,17 @@ export class PostgresAgentSharedCost {
     const query = this.queryWithSignal ? (sql: string, args: unknown[]) => this.queryWithSignal!(sql, args, signal) : this.query;
     const rows = (
       await query(
-        `SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COUNT(c.call_id) FILTER (WHERE c.status='reserved') AS reserved_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled') AS settled_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled' AND c.used_micros>c.reserved_micros) AS overruns,COUNT(c.call_id) FILTER (WHERE c.status IS NULL OR c.status NOT IN ('reserved','settled') OR c.reserved_micros<1 OR c.reserved_micros>100000000000 OR c.created_at<0 OR c.created_at>9007199254740991 OR (c.status='reserved' AND c.used_micros IS NOT NULL) OR (c.status='settled' AND (c.used_micros IS NULL OR c.used_micros<0 OR c.used_micros>100000000000))) AS invalid,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed,MIN(c.created_at) FILTER (WHERE c.status='reserved') AS oldest,${NOW} AS observed_at FROM (SELECT $1::text AS tenant_id,$2::text AS budget_id) s LEFT JOIN app_mixer_shared_cost_budgets b ON b.tenant_id=s.tenant_id AND b.budget_id=s.budget_id LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=s.tenant_id AND c.budget_id=s.budget_id GROUP BY b.currency,b.max_micros`,
+        `SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COUNT(c.call_id) FILTER (WHERE c.status='reserved') AS reserved_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled') AS 
+          settled_calls,COUNT(c.call_id) FILTER (WHERE c.status='settled' AND c.used_micros>c.reserved_micros) AS overruns,
+          COUNT(c.call_id) FILTER (WHERE c.status IS NULL OR c.status NOT IN ('reserved','settled') OR c.reserved_micros<1 OR c.reserved_micros>100000000000
+          OR c.created_at<0 OR c.created_at>9007199254740991
+          OR (c.status='reserved' AND c.used_micros IS NOT NULL)
+          OR (c.status='settled' AND (c.used_micros IS NULL OR c.used_micros<0 OR c.used_micros>100000000000))) AS invalid,
+          COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved,
+          COALESCE(SUM(CASE WHEN c.status='settled' THEN c.used_micros ELSE 0 END),0) AS committed,
+          MIN(c.created_at) FILTER (WHERE c.status='reserved') AS oldest,${NOW} AS observed_at FROM (SELECT $1::text AS tenant_id,$2::text AS budget_id) s
+          LEFT JOIN app_mixer_shared_cost_budgets b ON b.tenant_id=s.tenant_id AND b.budget_id=s.budget_id
+          LEFT JOIN app_mixer_shared_cost_calls c ON c.tenant_id=s.tenant_id AND c.budget_id=s.budget_id GROUP BY b.currency,b.max_micros`,
         [this.scope.tenantId, this.scope.budgetId]
       )
     ).rows;

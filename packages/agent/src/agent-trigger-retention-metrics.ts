@@ -19,8 +19,13 @@ export function readTriggerRetentionMetrics(db: DatabaseSync, scope: AgentRunSco
     cutoff = now - minAgeMs;
   const row = db
     .prepare(
-      `SELECT SUM(CASE WHEN ${timestamp} IS NOT NULL AND ${timestamp}<? THEN 1 ELSE 0 END) AS eligible,SUM(CASE WHEN ${timestamp} IS NOT NULL AND ${timestamp}>=? THEN 1 ELSE 0 END) AS not_yet,SUM(CASE 
-        WHEN ${timestamp} IS NULL THEN 1 ELSE 0 END) AS unknown_age,MIN(CASE WHEN ${timestamp}<? THEN ${timestamp} END) AS oldest,SUM(CASE WHEN ${timestamp} IS NOT NULL AND (typeof(${timestamp})<>'integer' OR ${timestamp}<0 OR ${timestamp}>9007199254740991) THEN 1 ELSE 0 END) AS invalid FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL`
+      `SELECT SUM(CASE WHEN ${timestamp} IS NOT NULL AND ${timestamp}<? THEN 1 ELSE 0 END) AS eligible,SUM(CASE WHEN ${timestamp} IS NOT NULL AND ${timestamp}>=? THEN 1 ELSE 0 END) AS not_yet,
+        SUM(CASE 
+        WHEN ${timestamp} IS NULL THEN 1 ELSE 0 END) AS unknown_age,MIN(CASE WHEN ${timestamp}<? THEN ${timestamp} END) AS oldest,SUM(CASE WHEN ${timestamp} IS NOT NULL AND 
+          (typeof(${timestamp})<>'integer' OR ${timestamp}<0 OR ${timestamp}>9007199254740991) THEN 1 ELSE 0 END) AS invalid FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id 
+            AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN 
+              agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND 
+                c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL`
     )
     .get(cutoff, cutoff, cutoff, scope.tenantId, scope.agentId);
   if (!row) throw Error('Invalid trigger retention metrics data');

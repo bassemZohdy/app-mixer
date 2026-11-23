@@ -72,7 +72,8 @@ export class SqliteOfflineQueue {
       CREATE INDEX IF NOT EXISTS offline_operations_archive_candidates ON offline_operations(tenant_id,application_id,principal_id,operation_id,id) WHERE status IN ('succeeded','discarded');
       CREATE TABLE IF NOT EXISTS offline_terminal_times (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,principal_id TEXT NOT NULL,id TEXT NOT NULL,completed_at INTEGER NOT NULL,PRIMARY 
         KEY(tenant_id,application_id,principal_id,id));
-      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert AFTER INSERT ON offline_operations WHEN NEW.status IN ('succeeded','discarded') BEGIN INSERT INTO offline_terminal_times VALUES(NEW.tenant_id,
+      CREATE TRIGGER IF NOT EXISTS offline_terminal_insert AFTER INSERT ON offline_operations WHEN NEW.status IN ('succeeded','discarded') BEGIN INSERT INTO offline_terminal_times 
+        VALUES(NEW.tenant_id,
         NEW.application_id,NEW.principal_id,NEW.id,CAST(unixepoch('subsec')*1000 AS INTEGER)) ON CONFLICT(tenant_id,application_id,principal_id,id) DO UPDATE SET completed_at=excluded.completed_at; 
           END;
       CREATE TRIGGER IF NOT EXISTS offline_terminal_insert_clear AFTER INSERT ON offline_operations WHEN NEW.status NOT IN ('succeeded','discarded') BEGIN DELETE FROM offline_terminal_times WHERE 

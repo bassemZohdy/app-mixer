@@ -442,7 +442,8 @@ export class PostgresExtensionApprovals {
     }
     if (!Array.isArray(result?.rows) || result.rows.length > 1) throw new CapabilityOutcomeUncertainError();
     if (result.rows.length === 0) throw new AppMixerError('conflict', 'Extension approval revision conflict');
-    if (terminal ? String(result.rows[0].revision) !== terminalRevision : Number(result.rows[0].revision) !== expected + 1) throw new CapabilityOutcomeUncertainError(); // The decision is committed; an anchor failure leaves the anchor behind until the next check catches it up.
+    // The decision is committed; an anchor failure leaves the anchor behind until the next check catches it up.
+    if (terminal ? String(result.rows[0].revision) !== terminalRevision : Number(result.rows[0].revision) !== expected + 1) throw new CapabilityOutcomeUncertainError();
     if (this.anchor) {
       try {
         await advanceAnchor(this.anchor, extensionApprovalAnchorKey(c.scope.tenantId, c.scope.applicationId), await this.epoch(c.scope), this.onAnchorError);

@@ -54,16 +54,14 @@ try {
       }
     }),
     result = await worker.runOnce(scope, process.env.TEST_RUN_ID),
-    spans = exporter
-      .getFinishedSpans()
-      .map(span => ({
-        name: span.name,
-        traceId: span.spanContext().traceId,
-        spanId: span.spanContext().spanId,
-        parent: span.parentSpanContext?.spanId,
-        attributes: span.attributes,
-        events: span.events
-      })),
+    spans = exporter.getFinishedSpans().map(span => ({
+      name: span.name,
+      traceId: span.spanContext().traceId,
+      spanId: span.spanContext().spanId,
+      parent: span.parentSpanContext?.spanId,
+      attributes: span.attributes,
+      events: span.events
+    })),
     counts = await metrics.snapshot({ tenantId: 'tenant', principalId: 'reader' });
   process.stdout.write(JSON.stringify({ status: result.status, calls, turns, spans, counts }));
 } finally {

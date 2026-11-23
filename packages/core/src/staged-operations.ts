@@ -43,12 +43,15 @@ export class SqliteStagedOperations {
         );
         this.db.exec(`CREATE TRIGGER IF NOT EXISTS staged_evidence_no_update BEFORE UPDATE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_evidence_no_delete BEFORE DELETE ON staged_reconciliation_evidence BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;
-        CREATE TRIGGER IF NOT EXISTS staged_evidence_no_replace BEFORE INSERT ON staged_reconciliation_evidence WHEN EXISTS(SELECT 1 FROM staged_reconciliation_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;`);
+        CREATE TRIGGER IF NOT EXISTS staged_evidence_no_replace BEFORE INSERT ON staged_reconciliation_evidence WHEN EXISTS(SELECT 1 FROM staged_reconciliation_evidence WHERE tenant_id=NEW.tenant_id 
+          AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged evidence is immutable'); END;`);
         this.db
-          .exec(`CREATE TABLE IF NOT EXISTS staged_recovery_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT NULL,reference TEXT NOT NULL,recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));
+          .exec(`CREATE TABLE IF NOT EXISTS staged_recovery_evidence (tenant_id TEXT NOT NULL,application_id TEXT NOT NULL,operation_id TEXT NOT NULL,revision INTEGER NOT NULL,principal_id TEXT NOT 
+            NULL,reference TEXT NOT NULL,recorded_at INTEGER NOT NULL,PRIMARY KEY(tenant_id,application_id,operation_id,revision));
         CREATE TRIGGER IF NOT EXISTS staged_recovery_no_update BEFORE UPDATE ON staged_recovery_evidence BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;
         CREATE TRIGGER IF NOT EXISTS staged_recovery_no_delete BEFORE DELETE ON staged_recovery_evidence BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;
-        CREATE TRIGGER IF NOT EXISTS staged_recovery_no_replace BEFORE INSERT ON staged_recovery_evidence WHEN EXISTS(SELECT 1 FROM staged_recovery_evidence WHERE tenant_id=NEW.tenant_id AND application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;`);
+        CREATE TRIGGER IF NOT EXISTS staged_recovery_no_replace BEFORE INSERT ON staged_recovery_evidence WHEN EXISTS(SELECT 1 FROM staged_recovery_evidence WHERE tenant_id=NEW.tenant_id AND 
+          application_id=NEW.application_id AND operation_id=NEW.operation_id AND revision=NEW.revision) BEGIN SELECT RAISE(ABORT,'Staged recovery evidence is immutable'); END;`);
         this.db.exec('CREATE INDEX IF NOT EXISTS staged_status_listing ON staged_business_operations(tenant_id,application_id,operation_id,status,id)');
         this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS staged_request_keys ON staged_business_operations(tenant_id,application_id,request_key) WHERE request_key IS NOT NULL');
         recordSchemaVersion(this.db, 'staged_operations', 2);
