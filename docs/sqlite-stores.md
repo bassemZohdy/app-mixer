@@ -2,6 +2,8 @@
 
 Every SQLite-backed store in `@app-mixer/core` and `@app-mixer/agent` opens its database with `PRAGMA busy_timeout=5000` and `PRAGMA journal_mode=WAL`. Write-ahead logging lets several readers and one writer proceed at the same time, so a run registry, action journal, approvals, budgets and notices that share one file no longer queue behind each other's reads. `synchronous` stays at its default (`FULL`), so a committed transaction, including the journal's `dispatching` record, survives a power loss; durability was not traded for speed. `:memory:` databases are unaffected.
 
+Several processes may initialize the same new file at once, for example workers started together. The run registry installs its schema in a single transaction and, if a pass still exhausts the busy timeout while another opener holds the write lock, retries the idempotent initialization a bounded number of times instead of failing with `database is locked`.
+
 ## Files
 
 A WAL database consists of three files: `name.sqlite`, `name.sqlite-wal` (committed transactions not yet copied into the main file) and `name.sqlite-shm` (shared memory index). The last connection to close checkpoints and removes the last two. After a crash they remain and the next open recovers from them, which is why the kill tests can restart workers on the same file. Never delete a `-wal` file next to a database that was not closed cleanly: it holds committed data.

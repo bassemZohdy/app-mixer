@@ -5,7 +5,7 @@ import { ensureAgentTraceSchema, insertAgentTraceParent, parseAgentTraceParent }
 import { ensureAgentNoticeSchema, insertAgentNotice } from './agent-notices.js';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
-import { openDatabase } from '@app-mixer/shared';
+import { openDatabase, retryWhenBusy } from '@app-mixer/shared';
 import { isIdentifier, isNonNegativeInteger } from './validation.js';
 import { AgentError } from './errors.js';
 import { assertSchemaSupported, recordSchemaVersion } from './schema-version.js';
@@ -222,8 +222,21 @@ export class SqliteAgentRuns {
   constructor(path: string) {
     this.db = openDatabase(path);
     try {
-      this.db.exec(`PRAGMA busy_timeout=5000;
-  CREATE TABLE IF NOT EXISTS agent_runs (
+      this.db.exec('PRAGMA busy_timeout=5000');
+      // Several processes may initialize the same new file at once, and every statement below is idempotent. The schema statements used to commit one by one,
+      // so a disk stall longer than the busy timeout while one opener held the write lock failed the others with "database is locked". Installing the schema in
+      // one transaction leaves a single lock window per opener, and an initialization pass that still times out is retried a bounded number of times.
+      retryWhenBusy(() => this.installSchema());
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+
+  private installSchema(): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (
    tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,definition_version INTEGER NOT NULL,
    revision INTEGER NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL,max_attempts INTEGER NOT NULL,deadline INTEGER NOT NULL,
    lease_owner TEXT,lease_token TEXT,lease_until INTEGER,archived INTEGER NOT NULL DEFAULT 0,
@@ -276,25 +289,26 @@ export class SqliteAgentRuns {
   CREATE TABLE IF NOT EXISTS agent_delegation_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,grant_id TEXT NOT NULL,grant_revision INTEGER NOT NULL,principal_id TEXT NOT 
     NULL,PRIMARY KEY(tenant_id,agent_id,run_id));
   CREATE TABLE IF NOT EXISTS agent_approval_waits (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,action_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id,run_id));`);
-      this.ensureCreationOrder();
-      ensureAgentNoticeSchema(this.db);
-      ensureAgentRunHistory(this.db);
-      ensureAgentRunTerminalSchema(this.db);
-      ensureAgentTraceSchema(this.db);
-      this.db.exec('BEGIN IMMEDIATE');
-      try {
-        this.db.exec(`DROP TRIGGER IF EXISTS agent_run_wakeups_no_update;
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    this.ensureCreationOrder();
+    ensureAgentNoticeSchema(this.db);
+    ensureAgentRunHistory(this.db);
+    ensureAgentRunTerminalSchema(this.db);
+    ensureAgentTraceSchema(this.db);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec(`DROP TRIGGER IF EXISTS agent_run_wakeups_no_update;
    CREATE TRIGGER agent_run_wakeups_no_update BEFORE UPDATE ON agent_run_wakeups WHEN NOT (NEW.id IS OLD.id AND NEW.tenant_id IS OLD.tenant_id AND NEW.agent_id IS OLD.agent_id AND NEW.source_id IS 
      OLD.source_id AND NEW.event_id IS OLD.event_id AND NEW.principal_id IS OLD.principal_id AND NEW.event_type IS OLD.event_type AND NEW.payload_hash IS OLD.payload_hash AND NEW.run_id IS OLD.run_id 
        AND NEW.observed_at IS OLD.observed_at AND NEW.payload='null' AND EXISTS(SELECT 1 FROM agent_run_wakeup_redactions r WHERE r.wakeup_id=OLD.id AND r.tenant_id=OLD.tenant_id AND 
          r.agent_id=OLD.agent_id)) BEGIN SELECT RAISE(ABORT,'Run wakeups are immutable'); END;`);
-        this.db.exec('COMMIT');
-      } catch (error) {
-        this.db.exec('ROLLBACK');
-        throw error;
-      }
+      this.db.exec('COMMIT');
     } catch (error) {
-      this.db.close();
+      this.db.exec('ROLLBACK');
       throw error;
     }
   }

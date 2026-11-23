@@ -6,6 +6,21 @@ const sleep = (ms: number) => {
 const busy = (error: unknown) => /database is locked|SQLITE_BUSY|SQLITE_LOCKED/i.test(String((error as { message?: unknown })?.message ?? error));
 
 /**
+ * Run a synchronous, idempotent database step again when it fails because the database is locked, at most `retries` more
+ * times with a short pause. Each pass already waits for the connection's busy timeout, so the total wait stays bounded.
+ */
+export function retryWhenBusy<T>(step: () => T, retries = 2): T {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return step();
+    } catch (error) {
+      if (!busy(error) || attempt >= retries) throw error;
+      sleep(25 + 25 * attempt);
+    }
+  }
+}
+
+/**
  * Open a database file with the busy timeout set and WAL mode switched on. Switching a new file to WAL mode can fail with
  * "database is locked" at once, without waiting for the busy timeout, when other processes open the same new file at the
  * same moment (workers started together). This retries only that switch, for about as long as the busy timeout, so every
