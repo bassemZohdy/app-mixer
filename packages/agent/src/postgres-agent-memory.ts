@@ -859,8 +859,8 @@ export class PostgresAgentMemory {
       check();
       if (!Array.isArray(rows) || rows.length > 1) throw Error('Invalid memory erasure request record');
       if (rows.length) {
-        const count = Number(rows[0].count);
-        if (rows[0].actor_id !== c.actor.principalId) throw Error('Memory erasure request conflict');
+        const count = Number(rows[0]!.count);
+        if (rows[0]!.actor_id !== c.actor.principalId) throw Error('Memory erasure request conflict');
         if (!Number.isSafeInteger(count) || count < 0) throw Error('Invalid memory erasure request record');
         return { erased: count, replayed: true };
       }
@@ -950,7 +950,7 @@ export class PostgresAgentMemory {
     }
     for (const item of items) await this.permit(c.actor, c.scope, 'audit', item.memoryId ?? undefined);
     await this.permit(c.actor, c.scope, 'audit');
-    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1].id) } : {}) };
+    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1]!.id) } : {}) };
   }
 }
 export type { Options as PostgresAgentMemoryOptions, Query as PostgresAgentMemoryQuery };

@@ -49,7 +49,7 @@ export class PostgresAgentDispatcherFoundation {
     } catch {}
   }
   private async pass(keepGoing: () => boolean, signal: AbortSignal): Promise<number> {
-    const page = await this.options.runs.queuedPage(this.scope, { after: this.cursor, limit: this.options.maxPerPass });
+    const page = await this.options.runs.queuedPage(this.scope, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.options.maxPerPass });
     let processed = 0;
     for (const runId of page.runIds) {
       if (!keepGoing()) return processed;
@@ -62,7 +62,7 @@ export class PostgresAgentDispatcherFoundation {
         if (keepGoing()) this.cursor = runId;
       }
     }
-    if (keepGoing() && !page.next) this.cursor = undefined;
+    if (keepGoing() && !page.next) delete this.cursor;
     return processed;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -72,8 +72,8 @@ export class PostgresAgentDispatcherFoundation {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -102,7 +102,7 @@ export class PostgresAgentDispatcherFoundation {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

@@ -70,7 +70,9 @@ export class AgentNoticeDeliveryWorker {
         this.report(error, delivery.id);
       }
     }
-    if (keepGoing()) this.cursor = page.nextAfter;
+    if (keepGoing())
+      if (page.nextAfter === undefined) delete this.cursor;
+      else this.cursor = page.nextAfter;
     return delivered;
   }
   runOnce(): Promise<number> {
@@ -79,7 +81,7 @@ export class AgentNoticeDeliveryWorker {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
+        if (this.pending === pending) delete this.pending;
       })
       .catch(() => {});
     return pending;
@@ -94,7 +96,7 @@ export class AgentNoticeDeliveryWorker {
       void pending
         .catch(error => this.report(error))
         .finally(() => {
-          if (this.pending === pending) this.pending = undefined;
+          if (this.pending === pending) delete this.pending;
           if (this.active) this.timer = setTimeout(loop, this.pollMs);
         });
     };
@@ -103,7 +105,7 @@ export class AgentNoticeDeliveryWorker {
   async stop(): Promise<void> {
     this.active = false;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     const pending = this.pending;
     if (pending)
       try {

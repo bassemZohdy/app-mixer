@@ -98,7 +98,7 @@ export class AgentWorkerHost {
     };
     this.stopping = Promise.all(this.started.map(one)).then(outcomes => {
       const result: AgentWorkerHostStopResult = { stopped: [], timedOut: [], failed: [] };
-      outcomes.forEach((outcome, index) => result[outcome].push(this.started[index][0]));
+      outcomes.forEach((outcome, index) => result[outcome].push(this.started[index]![0]));
       this.current = 'stopped';
       return result;
     });

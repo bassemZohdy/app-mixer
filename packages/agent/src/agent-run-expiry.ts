@@ -127,8 +127,8 @@ export class AgentRunExpiryWorker {
   private async pass(keepGoing: () => boolean, signal: AbortSignal, counts: PassCounts): Promise<number> {
     const page =
       this.runs instanceof PostgresAgentRunLifecycleFoundation
-        ? await this.runs.expiredPage(this.scope, { after: this.cursor, limit: this.maxPerPass })
-        : this.runs.expiredPage(this.scope, this.clock(), { after: this.cursor, limit: this.maxPerPass });
+        ? await this.runs.expiredPage(this.scope, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass })
+        : this.runs.expiredPage(this.scope, this.clock(), { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass });
     let expired = 0;
     for (const run of page.items) {
       if (!keepGoing()) return expired;
@@ -151,7 +151,7 @@ export class AgentRunExpiryWorker {
         if (keepGoing()) this.cursor = { deadline: run.deadline, runId: run.runId };
       }
     }
-    if (keepGoing() && !page.next) this.cursor = undefined;
+    if (keepGoing() && !page.next) delete this.cursor;
     return expired;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -173,8 +173,8 @@ export class AgentRunExpiryWorker {
     );
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -203,7 +203,7 @@ export class AgentRunExpiryWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

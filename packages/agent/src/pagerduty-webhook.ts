@@ -32,9 +32,9 @@ export function createPagerDutyWebhookAdapter(options: PagerDutyWebhookOptions) 
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let header: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'x-pagerduty-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'x-pagerduty-signature') {
           if (header !== undefined) return undefined;
-          header = req.rawHeaders[i + 1];
+          header = req.rawHeaders[i + 1]!;
         }
       if (!header || header.length > 1024) return undefined;
       const parts = header.split(',');

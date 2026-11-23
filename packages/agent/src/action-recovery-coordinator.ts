@@ -158,8 +158,8 @@ export class AgentActionRecoveryCoordinator {
     const page = await this.callback(
       callbackSignal =>
         this.discovery instanceof PostgresAgentActionRecoveryDiscoveryFoundation
-          ? this.discovery.list(this.actor, { after: this.cursor, limit: this.maxRunsPerPass }, callbackSignal)
-          : this.discovery.list(this.actor, { after: this.cursor, limit: this.maxRunsPerPass }),
+          ? this.discovery.list(this.actor, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxRunsPerPass }, callbackSignal)
+          : this.discovery.list(this.actor, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxRunsPerPass }),
       signal
     );
     let settled = 0;
@@ -202,7 +202,7 @@ export class AgentActionRecoveryCoordinator {
         if (keepGoing()) this.cursor = item.runId;
       }
     }
-    if (keepGoing() && !page.nextAfter) this.cursor = undefined;
+    if (keepGoing() && !page.nextAfter) delete this.cursor;
     return settled;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -223,8 +223,8 @@ export class AgentActionRecoveryCoordinator {
     );
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -253,7 +253,7 @@ export class AgentActionRecoveryCoordinator {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

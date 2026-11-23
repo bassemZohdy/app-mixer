@@ -132,15 +132,15 @@ export class RemoteRolloutPoller {
     this.pending = pending;
     void pending.finally(() => {
       if (this.pending === pending) {
-        this.pending = undefined;
+        delete this.pending;
         this.passStartedAt = null;
       }
-      if (this.controller === controller) this.controller = undefined;
+      if (this.controller === controller) delete this.controller;
       if (this.active) {
         const base = Math.min(this.maxBackoffMs, this.intervalMs * 2 ** Math.min(this.failures, 20)),
           delay = this.jitterRatio > 0 ? this.jittered(base) : base;
         this.timer = setTimeout(() => {
-          this.timer = undefined;
+          delete this.timer;
           this.loop();
         }, delay);
       }
@@ -150,7 +150,7 @@ export class RemoteRolloutPoller {
     this.active = false;
     this.controller?.abort();
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     const pending = this.pending;
     if (pending) await pending;
   }

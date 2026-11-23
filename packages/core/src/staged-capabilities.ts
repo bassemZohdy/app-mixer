@@ -194,8 +194,8 @@ function registerEvidenceCapability(registry: CapabilityRegistry, store: SqliteS
         const limit = value.limit ?? 50,
           rows =
             kind === 'recovery'
-              ? store.listRecoveryEvidence(scope, value.id, { after: value.after, limit: limit + 1 })
-              : store.listReconciliationEvidence(scope, value.id, { after: value.after, limit: limit + 1 });
+              ? store.listRecoveryEvidence(scope, value.id, { ...(value.after !== undefined ? { after: value.after } : {}), limit: limit + 1 })
+              : store.listReconciliationEvidence(scope, value.id, { ...(value.after !== undefined ? { after: value.after } : {}), limit: limit + 1 });
         await permit();
         active();
         const items = rows.slice(0, limit);

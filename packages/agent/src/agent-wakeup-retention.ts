@@ -23,8 +23,8 @@ export class SqliteAgentWakeupRetention {
   private readonly authorizeScope: Options['authorizeScope'];
   private readonly authorize: Options['authorize'];
   private readonly authorizeDiscovery: Options['authorizeDiscovery'];
-  private readonly authorizationTimeoutMs?: number;
-  private readonly maxPendingAuthorizations?: number;
+  private readonly authorizationTimeoutMs?: number | undefined;
+  private readonly maxPendingAuthorizations?: number | undefined;
   private authorizationsInFlight = 0;
   constructor(path: string, options: Options) {
     if (
@@ -327,8 +327,8 @@ export class SqliteAgentWakeupRetention {
         this.db.exec('COMMIT');
         return false;
       }
-      this.db.prepare('INSERT INTO agent_run_wakeup_redactions VALUES (?,?,?,?,?)').run(row.id, this.scope.tenantId, this.scope.agentId, who.principalId, now);
-      const result = this.db.prepare("UPDATE agent_run_wakeups SET payload='null' WHERE id=? AND tenant_id=? AND agent_id=?").run(row.id, this.scope.tenantId, this.scope.agentId);
+      this.db.prepare('INSERT INTO agent_run_wakeup_redactions VALUES (?,?,?,?,?)').run(row.id!, this.scope.tenantId, this.scope.agentId, who.principalId, now);
+      const result = this.db.prepare("UPDATE agent_run_wakeups SET payload='null' WHERE id=? AND tenant_id=? AND agent_id=?").run(row.id!, this.scope.tenantId, this.scope.agentId);
       if (result.changes !== 1) throw Error('Wakeup changed during redaction');
       this.db.exec('COMMIT');
       return true;

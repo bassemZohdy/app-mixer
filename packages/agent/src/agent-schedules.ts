@@ -64,11 +64,11 @@ function cron(expression: string) {
   const parts = expression.trim().split(/\s+/);
   if (parts.length !== 5) throw Error('Invalid cron expression');
   return {
-    minutes: field(parts[0], 0, 59),
-    hours: field(parts[1], 0, 23),
-    days: field(parts[2], 1, 31),
-    months: field(names(parts[3], monthNames, 1), 1, 12),
-    weekdays: new Set([...field(names(parts[4], weekdayNames, 0), 0, 7, 6)].map(day => day % 7)),
+    minutes: field(parts[0]!, 0, 59),
+    hours: field(parts[1]!, 0, 23),
+    days: field(parts[2]!, 1, 31),
+    months: field(names(parts[3]!, monthNames, 1), 1, 12),
+    weekdays: new Set([...field(names(parts[4]!, weekdayNames, 0), 0, 7, 6)].map(day => day % 7)),
     dayAny: parts[2] === '*',
     weekdayAny: parts[4] === '*'
   };

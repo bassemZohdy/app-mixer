@@ -175,10 +175,10 @@ export class PostgresJwtRevocations {
           'SELECT (SELECT epoch FROM app_mixer_jwt_revocation_epoch WHERE issuer=$1) AS epoch,EXISTS(SELECT 1 FROM app_mixer_jwt_revocations WHERE issuer=$1 AND token_hash=$2) AS revoked',
           [this.issuer, this.hash(tokenId)]
         );
-        if (!Array.isArray(result.rows) || result.rows.length !== 1 || typeof result.rows[0].revoked !== 'boolean') throw Error('Invalid JWT revocation result');
-        const epoch = result.rows[0].epoch === null ? 0 : Number(result.rows[0].epoch);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || typeof result.rows[0]!.revoked !== 'boolean') throw Error('Invalid JWT revocation result');
+        const epoch = result.rows[0]!.epoch === null ? 0 : Number(result.rows[0]!.epoch);
         if (!Number.isSafeInteger(epoch) || epoch < 0) throw Error('Invalid JWT revocation result');
-        revoked = result.rows[0].revoked as boolean;
+        revoked = result.rows[0]!.revoked as boolean;
         return epoch;
       }
     });

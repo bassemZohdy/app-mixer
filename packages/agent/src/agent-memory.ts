@@ -695,7 +695,7 @@ export class SqliteAgentMemory {
     }
     for (const item of items) await this.permit(c.actor, c.scope, 'audit', item.memoryId ?? undefined);
     await this.permit(c.actor, c.scope, 'audit');
-    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1].id) } : {}) };
+    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1]!.id) } : {}) };
   }
 }
 export type { MemoryScope as AgentMemoryScope, MemoryActor as AgentMemoryActor, Provenance as AgentMemoryProvenance, MemoryAction as AgentMemoryAction, Options as AgentMemoryOptions };

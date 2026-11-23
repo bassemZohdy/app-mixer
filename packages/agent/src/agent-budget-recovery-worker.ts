@@ -82,7 +82,7 @@ export class AgentBudgetRecoveryWorker {
     if (!keepGoing() || !(await this.uncertain())) return 0;
     let page: Awaited<ReturnType<AgentBudgetRecovery['pending']>>;
     try {
-      page = await this.recovery.pending(this.actor, { after: this.cursor, limit: this.maxPerPass }, signal);
+      page = await this.recovery.pending(this.actor, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass }, signal);
     } catch (error) {
       if (!keepGoing()) return 0;
       throw error;
@@ -102,7 +102,7 @@ export class AgentBudgetRecoveryWorker {
         if (keepGoing()) this.cursor = call.callId;
       }
     }
-    if (keepGoing() && !page.nextAfter) this.cursor = undefined;
+    if (keepGoing() && !page.nextAfter) delete this.cursor;
     return reconciled;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -112,8 +112,8 @@ export class AgentBudgetRecoveryWorker {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -142,7 +142,7 @@ export class AgentBudgetRecoveryWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

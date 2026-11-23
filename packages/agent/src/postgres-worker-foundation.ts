@@ -53,7 +53,13 @@ export class PostgresAgentWorkerFoundation {
       (options.maxPendingExecutions !== undefined && (!Number.isInteger(options.maxPendingExecutions) || options.maxPendingExecutions < 1 || options.maxPendingExecutions > 100))
     )
       throw Error('Invalid shared agent worker');
-    this.options = { ...options, definitions: { get: options.definitions.get.bind(options.definitions), getWithSignal: options.definitions.getWithSignal?.bind(options.definitions) } };
+    this.options = {
+      ...options,
+      definitions: {
+        get: options.definitions.get.bind(options.definitions),
+        ...(options.definitions.getWithSignal !== undefined ? { getWithSignal: options.definitions.getWithSignal.bind(options.definitions) } : {})
+      }
+    };
     this.startupTimeout = options.startupCallbackTimeoutMs ?? 30000;
     this.maxStartup = options.maxPendingStartupCallbacks ?? 10;
     this.maxExecutions = options.maxPendingExecutions ?? 1;

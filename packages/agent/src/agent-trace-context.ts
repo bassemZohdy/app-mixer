@@ -6,7 +6,7 @@ import type { AgentRunScope } from './durable-runs.js';
 export function parseAgentTraceParent(value: unknown): SpanContext | undefined {
   if (typeof value !== 'string' || !/^00-[a-f0-9]{32}-[a-f0-9]{16}-[a-f0-9]{2}$/.test(value)) return undefined;
   const parts = value.split('-'),
-    result = { traceId: parts[1], spanId: parts[2], traceFlags: parseInt(parts[3], 16), isRemote: true };
+    result = { traceId: parts[1]!, spanId: parts[2]!, traceFlags: parseInt(parts[3]!, 16), isRemote: true };
   return isSpanContextValid(result) ? result : undefined;
 }
 export function ensureAgentTraceSchema(db: DatabaseSync): void {

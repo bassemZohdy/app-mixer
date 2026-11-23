@@ -71,7 +71,7 @@ export class DurableAgentWorker {
         (!Number.isInteger(options.maxPendingStartupCallbacks) || options.maxPendingStartupCallbacks < 1 || options.maxPendingStartupCallbacks > 100))
     )
       throw Error('Invalid agent worker');
-    this.options = { ...options, tracing: options.tracing ? { ...options.tracing } : undefined };
+    this.options = { ...options, ...(options.tracing !== undefined ? { tracing: { ...options.tracing } } : {}) };
     this.verifySharedSlotAtUse = options.verifySharedSlotAtUse === true;
     this.clock = options.clock ?? Date.now;
     this.tracer = options.tracing?.tracer;

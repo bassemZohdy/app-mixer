@@ -63,7 +63,7 @@ export class DataPlaneRequestMetrics {
     const series = previous ?? { route: event.route, outcome: event.outcome, statusClass: event.statusClass, count: 0, sum: 0, buckets: bounds.map(() => 0) };
     series.count = count;
     series.sum = sum;
-    for (let i = 0; i < bounds.length; i++) if (seconds <= bounds[i]) series.buckets[i]++;
+    for (let i = 0; i < bounds.length; i++) if (seconds <= bounds[i]!) series.buckets[i] = (series.buckets[i] ?? 0) + 1;
     if (!previous) this.series.set(key, series);
     if (readiness) this.lastReadiness = readiness;
   };

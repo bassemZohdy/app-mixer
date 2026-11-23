@@ -1,7 +1,7 @@
 import { context, propagation, ROOT_CONTEXT, trace, SpanKind, SpanStatusCode, type Tracer } from '@opentelemetry/api';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-export type AgentTransportTracingOptions = { tracer: Tracer; trustRemoteParent?: boolean };
+export type AgentTransportTracingOptions = { tracer: Tracer; trustRemoteParent?: boolean | undefined };
 export function traceAgent(options: AgentTransportTracingOptions) {
   return (req: IncomingMessage, res: ServerResponse, run: () => void): void => {
     let started = false;
@@ -11,9 +11,9 @@ export function traceAgent(options: AgentTransportTracingOptions) {
         let value: string | undefined,
           duplicate = false;
         for (let i = 0; i < req.rawHeaders.length; i += 2)
-          if (req.rawHeaders[i].toLowerCase() === 'traceparent') {
+          if (req.rawHeaders[i]!.toLowerCase() === 'traceparent') {
             if (value !== undefined) duplicate = true;
-            value = req.rawHeaders[i + 1];
+            value = req.rawHeaders[i + 1]!;
           }
         if (!duplicate && value && value.length <= 512) parent = propagation.extract(ROOT_CONTEXT, { traceparent: value });
       }

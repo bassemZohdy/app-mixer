@@ -115,7 +115,7 @@ export class AgentActionRecoveryWorker {
     }
   }
   private async pass(keepGoing: () => boolean, signal: AbortSignal, counts: PassCounts): Promise<number> {
-    const page = await this.journal.list({ status: 'uncertain', after: this.cursor, limit: this.maxPerPass });
+    const page = await this.journal.list({ status: 'uncertain', ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass });
     let settled = 0;
     for (const action of page.actions) {
       if (!keepGoing()) return settled;
@@ -162,7 +162,7 @@ export class AgentActionRecoveryWorker {
         if (keepGoing()) this.cursor = action.actionId;
       }
     }
-    if (keepGoing() && !page.next) this.cursor = undefined;
+    if (keepGoing() && !page.next) delete this.cursor;
     return settled;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -184,8 +184,8 @@ export class AgentActionRecoveryWorker {
     );
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -214,7 +214,7 @@ export class AgentActionRecoveryWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

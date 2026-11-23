@@ -193,7 +193,7 @@ export class SqliteAgentRunControlHistory {
     }
     for (const event of items) if ((await permit('read', event)) !== true) throw Error('Run control history access denied');
     if ((await permit('list', null)) !== true) throw Error('Run control history access denied');
-    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1].id) } : {}) };
+    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1]!.id) } : {}) };
   }
 }
 export type { Options as AgentRunControlHistoryOptions, Actor as AgentRunControlHistoryActor };

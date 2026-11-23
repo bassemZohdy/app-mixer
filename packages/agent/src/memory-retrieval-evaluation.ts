@@ -110,8 +110,7 @@ export async function evaluateAgentMemoryRetrieval(options: {
         found++;
         precisionSum += found / (index + 1);
       }
-    const exactIds = comparison?.exact.map(hit => hit.id),
-      exactRecall = exactIds === undefined ? undefined : exactIds.length ? exactIds.filter(value => retrievedIds.includes(value)).length / exactIds.length : null;
+    const exactIds = comparison?.exact.map(hit => hit.id);
     results.push({
       id: item.id,
       retrievedIds,
@@ -120,7 +119,7 @@ export async function evaluateAgentMemoryRetrieval(options: {
       reciprocalRank: first < 0 ? 0 : 1 / (first + 1),
       averagePrecision: precisionSum / relevant.size,
       ndcg,
-      ...(exactIds === undefined ? {} : { exactIds, exactRecall })
+      ...(exactIds === undefined ? {} : { exactIds, exactRecall: exactIds.length ? exactIds.filter(value => retrievedIds.includes(value)).length / exactIds.length : null })
     });
   }
   const mean = (key: 'recall' | 'precision' | 'reciprocalRank' | 'averagePrecision' | 'ndcg') => results.reduce((sum, result) => sum + result[key], 0) / results.length;

@@ -58,7 +58,7 @@ export class AgentMemoryRetentionWorker {
     const scopes = options.scopes.map(scope => checkedMemoryScope(options.actor, scope).scope),
       keys = scopes.map(scope => JSON.stringify([scope.tenantId, scope.agentId, scope.owner.kind, scope.owner.id, scope.kind]));
     if (new Set(keys).size !== keys.length) throw Error('Duplicate memory retention scope');
-    this.actor = checkedMemoryScope(options.actor, scopes[0]).actor;
+    this.actor = checkedMemoryScope(options.actor, scopes[0]!).actor;
     this.scopes = scopes;
     this.memory = options.memory;
     this.authorize = options.authorize;
@@ -113,7 +113,7 @@ export class AgentMemoryRetentionWorker {
     const count = Math.min(this.maxScopesPerPass, this.scopes.length);
     for (let i = 0; i < count; i++) {
       if (!keepGoing()) break;
-      const scope = this.scopes[this.cursor];
+      const scope = this.scopes[this.cursor]!;
       try {
         if ((await this.allowed(scope, signal)) && keepGoing()) purged += await this.memory.purgeExpired({ ...this.actor }, scope, signal);
       } catch (error) {
@@ -133,8 +133,8 @@ export class AgentMemoryRetentionWorker {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -149,10 +149,10 @@ export class AgentMemoryRetentionWorker {
       const pending = this.pass(() => this.active && !controller.signal.aborted, controller.signal);
       this.pending = pending;
       void pending
-        .catch(error => this.report(error, this.scopes[this.cursor]))
+        .catch(error => this.report(error, this.scopes[this.cursor]!))
         .finally(() => {
-          if (this.pending === pending) this.pending = undefined;
-          if (this.controller === controller) this.controller = undefined;
+          if (this.pending === pending) delete this.pending;
+          if (this.controller === controller) delete this.controller;
           if (this.active) this.timer = setTimeout(loop, this.pollMs);
         });
     };
@@ -162,7 +162,7 @@ export class AgentMemoryRetentionWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

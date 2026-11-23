@@ -266,7 +266,7 @@ test('TASK-002.7.2 the Data Plane image installs only its workspaces, has a heal
   assert.doesNotMatch(dockerfile, /npm ci\s*&&/, 'no whole-workspace install');
   assert.doesNotMatch(dockerfile, /npm run build\s*&&|npm run build --workspaces/, 'only core and web are built');
   assert.match(dockerfile, /^HEALTHCHECK /m);
-  assert.match(workflow, /docker image inspect app-mixer-data-plane:test[^\n]*\.Size/);
+  assert.match(workflow, /docker image inspect app-mixer-data-plane:0\.1\.0[^\n]*\.Size/);
   assert.match(workflow, /test "\$size" -le \d+/);
 });
 

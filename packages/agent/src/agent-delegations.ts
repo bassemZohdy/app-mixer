@@ -24,8 +24,8 @@ export class SqliteAgentDelegations {
   private readonly runId: string;
   private readonly authorize: Options['authorize'];
   private readonly clock: () => number;
-  private readonly timeoutMs?: number;
-  private readonly maxPending?: number;
+  private readonly timeoutMs?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private inFlight = 0;
   constructor(path: string, options: Options) {
     if (

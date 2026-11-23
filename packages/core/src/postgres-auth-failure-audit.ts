@@ -44,7 +44,7 @@ export class PostgresAuthenticationFailureAudit {
       stored: async () => {
         const result = await this.query('SELECT sequence FROM app_mixer_auth_failure_counter WHERE id=1', []);
         if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid authentication audit result');
-        const stored = result.rows.length === 0 ? 0 : Number(result.rows[0].sequence);
+        const stored = result.rows.length === 0 ? 0 : Number(result.rows[0]!.sequence);
         if (!Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid authentication audit result');
         return stored;
       }

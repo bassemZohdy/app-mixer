@@ -85,9 +85,9 @@ export function createNotionWebhookAdapter(options: NotionWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let signature: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'x-notion-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'x-notion-signature') {
           if (signature !== undefined) return undefined;
-          signature = req.rawHeaders[i + 1];
+          signature = req.rawHeaders[i + 1]!;
         }
       if (!signature || !/^sha256=[a-f0-9]{64}$/.test(signature)) return undefined;
       const actual = Buffer.from(signature.slice(7), 'hex');

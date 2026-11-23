@@ -37,9 +37,9 @@ export function createStripeWebhookAdapter(options: StripeWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let header: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'stripe-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'stripe-signature') {
           if (header !== undefined) return undefined;
-          header = req.rawHeaders[i + 1];
+          header = req.rawHeaders[i + 1]!;
         }
       if (!header || header.length > 4096) return undefined;
       const parts = header.split(',');
@@ -49,7 +49,8 @@ export function createStripeWebhookAdapter(options: StripeWebhookOptions) {
       for (const part of parts) {
         const match = /^\s*([A-Za-z0-9]+)=([^\s,=]+)\s*$/.exec(part);
         if (!match) return undefined;
-        const [, name, value] = match;
+        const name = match[1]!,
+          value = match[2]!;
         if (name === 't') {
           if (timestamp !== undefined || !/^(0|[1-9][0-9]{0,15})$/.test(value)) return undefined;
           timestamp = value;

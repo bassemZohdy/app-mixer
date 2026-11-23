@@ -41,7 +41,7 @@ export class DurableAgentDispatcher {
     } catch {}
   }
   private async pass(keepGoing: () => boolean): Promise<number> {
-    const page = this.options.runs.queuedPage(this.scope, { after: this.cursor, limit: this.options.maxPerPass });
+    const page = this.options.runs.queuedPage(this.scope, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.options.maxPerPass });
     let processed = 0;
     for (const runId of page.runIds) {
       if (!keepGoing()) return processed;
@@ -54,7 +54,7 @@ export class DurableAgentDispatcher {
         if (keepGoing()) this.cursor = runId;
       }
     }
-    if (keepGoing() && !page.next) this.cursor = undefined;
+    if (keepGoing() && !page.next) delete this.cursor;
     return processed;
   }
   runOnce(): Promise<number> {
@@ -64,7 +64,7 @@ export class DurableAgentDispatcher {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
+        if (this.pending === pending) delete this.pending;
       })
       .catch(() => {});
     return pending;
@@ -80,7 +80,7 @@ export class DurableAgentDispatcher {
         void pending
           .catch(error => this.report(error))
           .finally(() => {
-            if (this.pending === pending) this.pending = undefined;
+            if (this.pending === pending) delete this.pending;
             if (this.active && this.generation === generation) this.timer = setTimeout(loop, this.options.pollMs);
           });
       };
@@ -90,7 +90,7 @@ export class DurableAgentDispatcher {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     const pending = this.pending;
     if (pending)
       try {

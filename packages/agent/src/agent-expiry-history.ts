@@ -65,7 +65,7 @@ export class SqliteAgentExpiryHistory {
       };
       if ((await this.authorize({ ...who }, 'read', { ...event })) === true) items.push(event);
     }
-    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1].id) } : {}) };
+    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1]!.id) } : {}) };
   }
 }
 export type { Options as AgentRunExpiryHistoryOptions, Actor as AgentRunExpiryHistoryActor };

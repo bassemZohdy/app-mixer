@@ -155,10 +155,10 @@ export async function checkIdempotencyContract(options: IdempotencyContractOptio
     const parallel = await Promise.all(Array.from({ length: concurrency }, () => settle(() => dispatch(input(), keys.concurrent))));
     const succeeded = parallel.filter(result => result.ok) as { ok: true; value: unknown }[];
     if (!succeeded.length) findings.push({ check: 'concurrent-replay', problem: 'every concurrent attempt failed' });
-    let different = succeeded.length > 0 && succeeded.some(result => !isDeepStrictEqual(result.value, succeeded[0].value));
+    let different = succeeded.length > 0 && succeeded.some(result => !isDeepStrictEqual(result.value, succeeded[0]!.value));
     const replay = await settle(() => dispatch(input(), keys.concurrent));
     if (!replay.ok) findings.push({ check: 'concurrent-replay', problem: 'replay after concurrent attempts failed' });
-    else if (succeeded.length && !isDeepStrictEqual(replay.value, succeeded[0].value)) different = true;
+    else if (succeeded.length && !isDeepStrictEqual(replay.value, succeeded[0]!.value)) different = true;
     if (different) findings.push({ check: 'concurrent-replay', problem: 'concurrent attempts or their replay returned different results' });
     const concurrent = await effects(keys.concurrent);
     if (concurrent !== 1) findings.push({ check: 'concurrent-replay', problem: `expected 1 effect, observed ${concurrent}` });

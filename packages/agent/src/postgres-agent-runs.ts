@@ -267,7 +267,7 @@ export class PostgresAgentRuns {
         config.deadline
       ]);
       if (inserted.rowCount !== 1) throw Error('Run already exists');
-      return parse((await query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [tenantId, agentId, runId])).rows[0]);
+      return parse((await query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [tenantId, agentId, runId])).rows[0]!);
     });
   }
   /** Queued runs, oldest ID first (bounded). */
@@ -542,7 +542,7 @@ export class PostgresAgentActionJournal {
     if (require === 'lease' && (!run || run.status !== 'running' || run.lease_token !== this.token || run.lease_until == null || Number(run.now) >= Number(run.lease_until)))
       throw Error('Action lease unavailable');
     if (require === 'uncertain' && (!run || run.status !== 'uncertain')) throw new AgentError('lost_race', 'Run is not uncertain');
-    return run;
+    return run!;
   }
   async get(actionId: string): Promise<AgentAction | undefined> {
     if (!id(actionId)) throw Error('Invalid action');

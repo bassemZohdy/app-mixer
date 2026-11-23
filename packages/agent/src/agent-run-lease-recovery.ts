@@ -121,8 +121,8 @@ export class AgentRunLeaseRecoveryWorker {
   private async pass(keepGoing: () => boolean, signal: AbortSignal, counts: { denied: number; errors: number }): Promise<number> {
     const page =
       this.runs instanceof PostgresAgentRunLifecycleFoundation
-        ? await this.runs.expiredLeasePage(this.scope, { after: this.cursor, limit: this.maxPerPass })
-        : this.runs.expiredLeasePage(this.scope, this.clock(), { after: this.cursor, limit: this.maxPerPass });
+        ? await this.runs.expiredLeasePage(this.scope, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass })
+        : this.runs.expiredLeasePage(this.scope, this.clock(), { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass });
     let recovered = 0;
     for (const lease of page.items) {
       if (!keepGoing()) return recovered;
@@ -149,7 +149,7 @@ export class AgentRunLeaseRecoveryWorker {
         if (keepGoing()) this.cursor = { leaseUntil: lease.leaseUntil, runId: lease.runId };
       }
     }
-    if (keepGoing() && !page.next) this.cursor = undefined;
+    if (keepGoing() && !page.next) delete this.cursor;
     return recovered;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -171,8 +171,8 @@ export class AgentRunLeaseRecoveryWorker {
     );
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -201,7 +201,7 @@ export class AgentRunLeaseRecoveryWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

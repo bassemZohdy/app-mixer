@@ -167,7 +167,7 @@ export class PostgresPublicationReleaseRegistry {
         'definition_digest',
       [...identity, releaseVersion, definitionDigest]
     );
-    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].definition_digest !== definitionDigest) throw Error('Publication release conflict');
+    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0]!.definition_digest !== definitionDigest) throw Error('Publication release conflict');
   }
   /** Advance only to an already registered version; concurrent advances cannot lower the floor. */
   async advanceFloor(scope: PublicationReleaseScope, minimumVersion: number): Promise<number> {
@@ -240,7 +240,7 @@ export class PostgresPublicationReleaseRegistry {
     if (!Number.isSafeInteger(anchored) || (anchored as number) < 0) throw Error('Release floor anchor unavailable');
     const result = await this.query('SELECT minimum_version FROM app_mixer_release_floors WHERE tenant_id=$1 AND application_id=$2 AND environment=$3', identity);
     if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid publication release result');
-    const stored = result.rows.length === 0 ? 0 : Number(result.rows[0].minimum_version);
+    const stored = result.rows.length === 0 ? 0 : Number(result.rows[0]!.minimum_version);
     if (!Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid publication release result');
     if (stored < (anchored as number)) throw Error('Release floor was rolled back');
     if (stored > (anchored as number))
@@ -299,7 +299,7 @@ export class PostgresPublicationReleaseRegistry {
         'a.version>=f.minimum_version',
       [...identity, releaseVersion, definitionDigest]
     );
-    if (!Array.isArray(result.rows) || result.rows.length > 1 || (result.rows.length === 1 && result.rows[0].allowed !== 1)) throw Error('Invalid publication release result');
+    if (!Array.isArray(result.rows) || result.rows.length > 1 || (result.rows.length === 1 && result.rows[0]!.allowed !== 1)) throw Error('Invalid publication release result');
     return result.rows.length === 1;
   }
 }

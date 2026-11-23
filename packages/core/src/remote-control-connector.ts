@@ -236,7 +236,7 @@ export function createRemoteControlConnector(options: RemoteControlConnectorOpti
       requireAdvancingSource
     } = options,
     timeoutMs = options.timeoutMs ?? 10000,
-    tracing = options.tracing && { tracer: options.tracing.tracer, propagate: options.tracing.propagate },
+    tracing = options.tracing && { tracer: options.tracing.tracer, propagate: options.tracing.propagate ?? false },
     discovery = options.discovery && {
       authorize: options.discovery.authorize,
       audit: options.discovery.audit,

@@ -192,7 +192,7 @@ export class SqliteAgentLeaseRecoveryHistory {
     }
     for (const event of items) if ((await this.permit(who, 'read', event, signal)) !== true) throw Error('Lease recovery history access denied');
     if ((await this.permit(who, 'list', null, signal)) !== true) throw Error('Lease recovery history access denied');
-    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1].id) } : {}) };
+    return { items, ...(rows.length > limit ? { nextAfter: Number(rows[limit - 1]!.id) } : {}) };
   }
 }
 export type { Options as AgentRunLeaseRecoveryHistoryOptions, Actor as AgentRunLeaseRecoveryHistoryActor };

@@ -128,8 +128,8 @@ export class PostgresOfflineRequestKeys {
     );
     if (!Array.isArray(result.rows)) throw Error('Invalid shared offline key result');
     if (result.rows.length === 0) throw new AppMixerError('conflict', 'Shared offline request conflict');
-    if (result.rows.length !== 1 || !uuid(result.rows[0].idempotency_key)) throw Error('Invalid shared offline key result');
-    return result.rows[0].idempotency_key;
+    if (result.rows.length !== 1 || !uuid(result.rows[0]!.idempotency_key)) throw Error('Invalid shared offline key result');
+    return result.rows[0]!.idempotency_key;
   }
   /** Validate a submitted key against the authenticated scope and exact operation content. */
   async verify(scope: DataScope, principalId: string, operationId: string, payload: Record<string, unknown>, idempotencyKey: string): Promise<boolean> {
@@ -143,7 +143,7 @@ export class PostgresOfflineRequestKeys {
       'SELECT 1 AS valid FROM app_mixer_offline_request_keys WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND operation_id=$4 AND payload_digest=$5 AND idempotency_key=$6',
       [tenantId, applicationId, principalId, operationId, digest, idempotencyKey]
     );
-    if (!Array.isArray(result.rows) || result.rows.length > 1 || (result.rows.length === 1 && result.rows[0].valid !== 1)) throw Error('Invalid shared offline key result');
+    if (!Array.isArray(result.rows) || result.rows.length > 1 || (result.rows.length === 1 && result.rows[0]!.valid !== 1)) throw Error('Invalid shared offline key result');
     return result.rows.length === 1;
   }
 }

@@ -38,7 +38,7 @@ export class ConfiguredAgentOperationMetrics {
     entry.counts[outcome]++;
     entry.sumSeconds = next;
     bounds.forEach((bound, index) => {
-      if (seconds <= bound) entry.buckets[index]++;
+      if (seconds <= bound) entry.buckets[index] = (entry.buckets[index] ?? 0) + 1;
     });
   };
   private actor(actor: AgentRunMetricsActor): AgentRunMetricsActor {

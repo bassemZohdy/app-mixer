@@ -79,7 +79,7 @@ export class PostgresOfflineExecutions {
       );
     if (!Array.isArray(response.rows) || response.rows.length > 1) throw Error('Invalid shared offline execution');
     if (!response.rows.length) return undefined;
-    const row = response.rows[0];
+    const row = response.rows[0]!;
     if (!['ready', 'running', 'uncertain', 'succeeded'].includes(String(row.status)) || !uuid(row.attempt_token)) throw Error('Invalid shared offline execution');
     const status = row.status as SharedOfflineExecution['status'];
     if (status === 'succeeded') {
@@ -148,7 +148,7 @@ export class PostgresOfflineExecutions {
         'app_mixer_offline_executions.operation_id=EXCLUDED.operation_id RETURNING attempt_token',
       [...identity, operationId, attempt]
     );
-    if (!Array.isArray(claim.rows) || claim.rows.length > 1 || (claim.rows.length === 1 && claim.rows[0].attempt_token !== attempt)) throw Error('Invalid shared offline execution');
+    if (!Array.isArray(claim.rows) || claim.rows.length > 1 || (claim.rows.length === 1 && claim.rows[0]!.attempt_token !== attempt)) throw Error('Invalid shared offline execution');
     if (!claim.rows.length) {
       const existing = await this.get(safeScope, principalId, key);
       if (!existing) throw new AppMixerError('denied', 'Shared offline key forbidden');
@@ -203,7 +203,7 @@ export class PostgresOfflineExecutions {
           "status='running' RETURNING attempt_token",
         [...identity, attempt, serialized]
       );
-      if (!Array.isArray(written.rows) || written.rows.length !== 1 || written.rows[0].attempt_token !== attempt) throw Error('Shared offline execution fence lost');
+      if (!Array.isArray(written.rows) || written.rows.length !== 1 || written.rows[0]!.attempt_token !== attempt) throw Error('Shared offline execution fence lost');
       return JSON.parse(serialized);
     } catch {
       try {
@@ -260,7 +260,7 @@ export class PostgresOfflineExecutions {
         'RETURNING attempt_token',
       [...identity, attemptToken]
     );
-    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].attempt_token !== attemptToken) throw Error('Shared offline execution changed');
+    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0]!.attempt_token !== attemptToken) throw Error('Shared offline execution changed');
   }
   /** The trusted host must independently establish the outcome before reconciliation. */
   async reconcile(scope: DataScope, principalId: string, key: string, attemptToken: string, decision: { outcome: 'applied'; result: unknown } | { outcome: 'not_applied' }): Promise<void> {
@@ -313,7 +313,7 @@ export class PostgresOfflineExecutions {
         "status='uncertain' RETURNING attempt_token",
       [...identity, attemptToken, status, resultJson]
     );
-    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].attempt_token !== attemptToken) throw Error('Shared offline execution changed');
+    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0]!.attempt_token !== attemptToken) throw Error('Shared offline execution changed');
   }
 }
 export type { Options as PostgresOfflineExecutionsOptions };

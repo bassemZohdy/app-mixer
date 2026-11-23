@@ -11,8 +11,8 @@ export class PostgresAgentNoticesFoundation {
   private readonly query: Query;
   private readonly transaction: Options['transaction'];
   private readonly authorize: Options['authorize'];
-  private readonly timeout?: number;
-  private readonly maxPending?: number;
+  private readonly timeout?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private pending = 0;
   constructor(options: Options) {
     if (

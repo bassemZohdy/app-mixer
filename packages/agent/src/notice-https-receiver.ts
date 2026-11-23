@@ -269,20 +269,20 @@ export function createAgentNoticeReceiverServer(options: ServerOptions): Server 
         }
         let contentType: string | undefined, deliveryKey: string | undefined;
         for (let i = 0; i < req.rawHeaders.length; i += 2) {
-          const name = req.rawHeaders[i].toLowerCase();
+          const name = req.rawHeaders[i]!.toLowerCase();
           if (name === 'content-type') {
             if (contentType !== undefined) {
               reply(res, 400);
               return;
             }
-            contentType = req.rawHeaders[i + 1];
+            contentType = req.rawHeaders[i + 1]!;
           }
           if (name === 'idempotency-key') {
             if (deliveryKey !== undefined) {
               reply(res, 400);
               return;
             }
-            deliveryKey = req.rawHeaders[i + 1];
+            deliveryKey = req.rawHeaders[i + 1]!;
           }
         }
         if (!contentType || !/^application\/json(?:\s*;|$)/i.test(contentType) || !key(deliveryKey)) {

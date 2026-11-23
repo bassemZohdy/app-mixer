@@ -75,8 +75,9 @@ export function migrationPlanDigest(
 function prefixSuccessor(prefix: string): string | undefined {
   const points = Array.from(Buffer.from(prefix, 'utf8').toString('utf8'), character => character.codePointAt(0)!);
   for (let i = points.length - 1; i >= 0; i--) {
-    if (points[i] < 0x10ffff) {
-      let next = points[i] + 1;
+    const point = points[i]!;
+    if (point < 0x10ffff) {
+      let next = point + 1;
       if (next === 0xd800) next = 0xe000;
       return String.fromCodePoint(...points.slice(0, i), next);
     }
@@ -330,7 +331,21 @@ export class SqliteDataProvider implements DataProvider {
     )
       throw Error('Invalid data rollback');
     const { fromVersion, targetVersion, digest, outputDigest, planDigest, transform, validate, evidence } = rollback;
-    return this.applyMigration(scope, collection, { fromVersion, toVersion: fromVersion + 1, digest, outputDigest, planDigest, transform, validate, evidence }, targetVersion);
+    return this.applyMigration(
+      scope,
+      collection,
+      {
+        fromVersion,
+        toVersion: fromVersion + 1,
+        digest,
+        ...(outputDigest !== undefined ? { outputDigest } : {}),
+        ...(planDigest !== undefined ? { planDigest } : {}),
+        transform,
+        validate,
+        ...(evidence !== undefined ? { evidence } : {})
+      },
+      targetVersion
+    );
   }
   rollbackHistory(scope: DataScope, collection: string, options: { after?: number; limit?: number } = {}): { items: DataRollbackEvent[]; nextAfter?: number } {
     checkKey(scope, collection, 'validation');

@@ -324,7 +324,7 @@ export function registerOfflineRecoveryEvidenceCapability(registry: CapabilityRe
         };
         await permit();
         const limit = value.limit ?? 50,
-          rows = queue.listRecoveryEvidence(scope, queuePrincipalId, value.id, { after: value.after, limit: limit + 1 });
+          rows = queue.listRecoveryEvidence(scope, queuePrincipalId, value.id, { ...(value.after !== undefined ? { after: value.after } : {}), limit: limit + 1 });
         await permit();
         active();
         const items = rows.slice(0, limit);

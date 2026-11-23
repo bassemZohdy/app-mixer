@@ -15,9 +15,9 @@ function key(x: unknown): Buffer | undefined {
 function header(req: IncomingMessage, name: string): string | undefined | null {
   let value: string | undefined;
   for (let i = 0; i < req.rawHeaders.length; i += 2)
-    if (req.rawHeaders[i].toLowerCase() === name) {
+    if (req.rawHeaders[i]!.toLowerCase() === name) {
       if (value !== undefined) return null;
-      value = req.rawHeaders[i + 1];
+      value = req.rawHeaders[i + 1]!;
     }
   return value;
 }

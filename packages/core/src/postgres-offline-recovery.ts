@@ -97,7 +97,7 @@ export class PostgresOfflineRecovery {
     return now;
   }
   private checked(result: { rows: Record<string, unknown>[] }, attemptToken: string): void {
-    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0].attempt_token !== attemptToken || !integer(Number(result.rows[0].id)) || Number(result.rows[0].id) < 1)
+    if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0]!.attempt_token !== attemptToken || !integer(Number(result.rows[0]!.id)) || Number(result.rows[0]!.id) < 1)
       throw Error('Offline recovery state changed');
   }
   /** The host must establish that the old dispatcher cannot still act. */

@@ -89,7 +89,11 @@ export class OfflineRetentionWorker {
     if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid offline retention time');
     if (!alive()) return 0;
     const cutoff = Math.max(0, now - this.minAgeMs),
-      page = this.queue.listArchiveRecords(this.scope, this.queuePrincipalId, this.operationId, 'candidates', { after: this.cursor, limit: this.maxPerPass, completedBefore: cutoff });
+      page = this.queue.listArchiveRecords(this.scope, this.queuePrincipalId, this.operationId, 'candidates', {
+        ...(this.cursor !== undefined ? { after: this.cursor } : {}),
+        limit: this.maxPerPass,
+        completedBefore: cutoff
+      });
     let retired = 0;
     for (const item of page.items) {
       if (!alive()) break;
@@ -116,7 +120,9 @@ export class OfflineRetentionWorker {
         if (alive()) this.report(error);
       }
     }
-    if (alive()) this.cursor = page.nextAfter;
+    if (alive())
+      if (page.nextAfter === undefined) delete this.cursor;
+      else this.cursor = page.nextAfter;
     return retired;
   }
   private launch(): Promise<number> {
@@ -128,8 +134,8 @@ export class OfflineRetentionWorker {
     void pending
       .finally(() => {
         if (this.pending === pending) {
-          this.pending = undefined;
-          this.controller = undefined;
+          delete this.pending;
+          delete this.controller;
         }
       })
       .catch(() => {});
@@ -158,7 +164,7 @@ export class OfflineRetentionWorker {
     this.active = false;
     this.generation++;
     if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

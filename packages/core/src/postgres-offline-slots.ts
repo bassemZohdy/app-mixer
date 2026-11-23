@@ -33,8 +33,8 @@ export class PostgresOfflineSlots {
   private one(result: { rows: Record<string, unknown>[] }, expected?: string): string {
     if (!Array.isArray(result.rows)) throw Error('Invalid shared offline slot result');
     if (!result.rows.length) throw new AppMixerError('conflict', 'Shared offline slot conflict');
-    if (result.rows.length !== 1 || !uuid(result.rows[0].request_key) || (expected !== undefined && result.rows[0].request_key !== expected)) throw Error('Invalid shared offline slot result');
-    return result.rows[0].request_key;
+    if (result.rows.length !== 1 || !uuid(result.rows[0]!.request_key) || (expected !== undefined && result.rows[0]!.request_key !== expected)) throw Error('Invalid shared offline slot result');
+    return result.rows[0]!.request_key;
   }
   async open(scope: DataScope, principalId: string, slot: string): Promise<string> {
     const args = this.args(scope, principalId, slot),
@@ -155,8 +155,8 @@ export class PostgresOfflineSlots {
       [...args, expectedRequestKey, operationId, digest, candidate]
     );
     this.one(result, expectedRequestKey);
-    if (!uuid(result.rows[0].idempotency_key)) throw Error('Invalid shared offline slot result');
-    return { requestKey: expectedRequestKey, idempotencyKey: result.rows[0].idempotency_key };
+    if (!uuid(result.rows[0]!.idempotency_key)) throw Error('Invalid shared offline slot result');
+    return { requestKey: expectedRequestKey, idempotencyKey: result.rows[0]!.idempotency_key };
   }
   /** Selecting an earlier request is explicit and bound to its authenticated content. */
   async restore(

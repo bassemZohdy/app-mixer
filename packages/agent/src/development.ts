@@ -30,7 +30,7 @@ export function createProposalClient(endpoint: string, token: string): ProposalC
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify({ baseRevision, patches }),
-      signal,
+      signal: signal ?? null,
       redirect: 'error'
     });
     if (!response.ok) throw Error('Proposal service rejected the request');

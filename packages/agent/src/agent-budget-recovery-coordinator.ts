@@ -73,7 +73,7 @@ export class AgentBudgetRecoveryCoordinator {
   private async pass(keepGoing: () => boolean, signal: AbortSignal): Promise<number> {
     let page: Awaited<ReturnType<SqliteAgentBudgetRecoveryDiscovery['list']>>;
     try {
-      page = await this.discovery.list(this.actor, { after: this.cursor, limit: this.maxRunsPerPass }, signal);
+      page = await this.discovery.list(this.actor, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxRunsPerPass }, signal);
     } catch (error) {
       if (!keepGoing()) return 0;
       throw error;
@@ -112,7 +112,7 @@ export class AgentBudgetRecoveryCoordinator {
         if (keepGoing()) this.cursor = item.runId;
       }
     }
-    if (keepGoing() && !page.nextAfter) this.cursor = undefined;
+    if (keepGoing() && !page.nextAfter) delete this.cursor;
     return settled;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -122,8 +122,8 @@ export class AgentBudgetRecoveryCoordinator {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -152,7 +152,7 @@ export class AgentBudgetRecoveryCoordinator {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

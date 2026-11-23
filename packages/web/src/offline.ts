@@ -450,7 +450,7 @@ export class EncryptedBrowserQueue {
         if (!(error instanceof Error) || error.message !== COUNTER_CHANGED || attempt >= 31) throw error;
       }
       // Another tab advanced the counter; back off with jitter so contending writers do not retry in lockstep.
-      const delay = Math.min(200, 2 ** Math.min(attempt, 7)) * (this.crypt.getRandomValues(new Uint8Array(1))[0] / 255);
+      const delay = Math.min(200, 2 ** Math.min(attempt, 7)) * (this.crypt.getRandomValues(new Uint8Array(1))[0]! / 255);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }

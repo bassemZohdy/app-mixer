@@ -44,8 +44,8 @@ export class SqliteAgentApprovals {
   private readonly runId: string;
   private readonly authorize: Options['authorize'];
   private readonly clock: () => number;
-  private readonly timeoutMs?: number;
-  private readonly maxPending?: number;
+  private readonly timeoutMs?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private inFlight = 0;
   constructor(path: string, options: Options) {
     if (
@@ -265,7 +265,7 @@ export class SqliteAgentApprovals {
           if (!row || row.operation_id !== item.operationId) throw new AgentError('conflict', 'Approval changed');
           return this.convert(row, now);
         });
-      return { items, ...(more ? { nextAfter: selected[selected.length - 1].actionId } : {}) };
+      return { items, ...(more ? { nextAfter: selected[selected.length - 1]!.actionId } : {}) };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }

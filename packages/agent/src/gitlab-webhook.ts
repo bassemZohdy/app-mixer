@@ -55,8 +55,8 @@ export function createGitlabWebhookAdapter(options: GitlabWebhookOptions) {
       verified.delete(req);
       let messageId: string | undefined, timestamp: string | undefined, header: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        const name = req.rawHeaders[i].toLowerCase(),
-          value = req.rawHeaders[i + 1];
+        const name = req.rawHeaders[i]!.toLowerCase(),
+          value = req.rawHeaders[i + 1]!;
         if (name === 'webhook-id') {
           if (messageId !== undefined) return undefined;
           messageId = value;
@@ -75,7 +75,7 @@ export function createGitlabWebhookAdapter(options: GitlabWebhookOptions) {
       const parts = header.split(' ');
       if (parts.length > 16 || parts.some(part => !/^v1,[A-Za-z0-9+/]{43}=$/.test(part))) return undefined;
       const signatures = parts.map(part => Buffer.from(part.slice(3), 'base64'));
-      if (signatures.some((signature, i) => signature.length !== 32 || signature.toString('base64') !== parts[i].slice(3))) return undefined;
+      if (signatures.some((signature, i) => signature.length !== 32 || signature.toString('base64') !== parts[i]!.slice(3))) return undefined;
       let matched = 0;
       for (const key of keys) {
         const expected = createHmac('sha256', key)

@@ -16,7 +16,7 @@ export type NativeNode = {
   extensionProps?: Record<string, unknown>;
   children: NativeNode[];
 };
-export type NativeSurface = { id: string; revision: number; root?: NativeNode };
+export type NativeSurface = { id: string; revision: number; root?: NativeNode | undefined };
 export type ActionMessage = { version: 'v0.9.1'; action: { name: string; surfaceId: string; sourceComponentId: string; timestamp: string; context: Record<string, unknown> } };
 const obj = (value: unknown): value is Obj => value !== null && typeof value === 'object' && !Array.isArray(value);
 // JSON Schema maxLength counts Unicode code points, not UTF-16 code units.
@@ -81,7 +81,7 @@ function updateData(data: unknown, path: string, value: unknown, remove: boolean
   const root = cloneData(data);
   let current = root;
   for (let i = 0; i < keys.length - 1; i++) {
-    const key = keys[i];
+    const key = keys[i]!;
     if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
     if (Array.isArray(current) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= current.length)) throw Error('Invalid array index');
     if (!Object.hasOwn(current, key) || (current as Record<string, unknown>)[key] === undefined) {
@@ -92,7 +92,7 @@ function updateData(data: unknown, path: string, value: unknown, remove: boolean
     current = (current as Record<string, unknown>)[key];
   }
   if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
-  const last = keys[keys.length - 1];
+  const last = keys[keys.length - 1]!;
   if (Array.isArray(current)) {
     if (!/^(0|[1-9]\d*)$/.test(last) || Number(last) >= current.length) throw Error('Invalid array index');
     current[Number(last)] = remove ? undefined : cloneData(value);
@@ -376,8 +376,8 @@ export class NativeSurfaceStore {
   apply(message: unknown): void {
     if (!obj(message) || message.version !== 'v0.9.1') throw Error('Unsupported A2UI version');
     const keys = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface'].filter(key => Object.hasOwn(message, key));
-    if (keys.length !== 1 || !only(message, ['version', keys[0]]) || !obj(message[keys[0]])) throw Error('Unsupported A2UI message');
-    const kind = keys[0],
+    if (keys.length !== 1 || !only(message, ['version', keys[0]!]) || !obj(message[keys[0]!])) throw Error('Unsupported A2UI message');
+    const kind = keys[0]!,
       payload = message[kind] as Obj;
     if (!id(payload.surfaceId)) throw Error('Invalid surface ID');
     const surfaceId = payload.surfaceId;
@@ -529,7 +529,7 @@ export function createReactNativeA2UIComponent(
   const justify: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', spaceBetween: 'space-between', spaceAround: 'space-around', spaceEvenly: 'space-evenly' };
   const align: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' };
   return function NativeA2UI({ subscribe, onError, onAction, variantStyles }: NativeA2UIProps): any {
-    const [surfaces, setSurfaces] = React.useState<Array<{ surface: NativeSurface; key: number; renderRoot?: NativeNode }>>([]),
+    const [surfaces, setSurfaces] = React.useState<Array<{ surface: NativeSurface; key: number; renderRoot?: NativeNode | undefined }>>([]),
       errors = React.useRef(onError),
       actions = React.useRef(onAction),
       storeRef = React.useRef<NativeSurfaceStore | null>(null),

@@ -21,7 +21,7 @@ export class RemoteRolloutMetrics {
   private readonly rollout: SqliteRemoteRollout | PostgresRemoteRollout;
   private readonly scope: RemoteRolloutScope;
   private readonly authorize: RemoteRolloutMetricsOptions['authorize'];
-  private readonly poller?: RemoteRolloutPoller;
+  private readonly poller?: RemoteRolloutPoller | undefined;
   private readonly bounded: ReturnType<typeof createBoundedOperation>;
   constructor(rollout: SqliteRemoteRollout | PostgresRemoteRollout, options: RemoteRolloutMetricsOptions) {
     if (

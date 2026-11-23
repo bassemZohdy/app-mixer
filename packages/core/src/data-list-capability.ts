@@ -215,7 +215,7 @@ export function registerDataListCapability(registry: CapabilityRegistry, provide
       (!rangeAllowed.has(f.field) || typeof f.value !== 'number' || !Number.isFinite(f.value))
     )
       return;
-    return { field: f.field, value: f.value as Filter['value'], ...(operator === undefined || operator === 'eq' ? {} : { operator: operator as Filter['operator'] }) };
+    return { field: f.field, value: f.value as Filter['value'], ...(operator === undefined || operator === 'eq' ? {} : { operator: operator as NonNullable<Filter['operator']> }) };
   };
   const parseFilters = (value: unknown, any = false): Filter[] | undefined => {
     if (!Array.isArray(value) || value.length < 1 || value.length > 10) return;

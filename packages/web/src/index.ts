@@ -78,7 +78,7 @@ function update(data: unknown, path: string, value: unknown, remove: boolean): u
   const root: unknown = cloneData(data);
   let current: unknown = root;
   for (let i = 0; i < keys.length - 1; i++) {
-    const key = keys[i];
+    const key = keys[i]!;
     if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
     if (Array.isArray(current) && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= current.length)) throw Error('Invalid array index');
     if (!Object.hasOwn(current, key) || (current as Record<string, unknown>)[key] === undefined) {
@@ -89,7 +89,7 @@ function update(data: unknown, path: string, value: unknown, remove: boolean): u
     current = (current as Record<string, unknown>)[key];
   }
   if (!obj(current) && !Array.isArray(current)) throw Error('Data path parent does not exist');
-  const last = keys[keys.length - 1];
+  const last = keys[keys.length - 1]!;
   if (Array.isArray(current)) {
     if (!/^(0|[1-9]\d*)$/.test(last) || Number(last) >= current.length) throw Error('Invalid array index');
     if (remove) current[Number(last)] = undefined;
@@ -204,7 +204,7 @@ export function basicRegistry(): ComponentRegistry {
       if (c.variant !== undefined && !['h1', 'h2', 'h3', 'h4', 'h5', 'caption', 'body'].includes(c.variant as string)) throw Error('Unsupported Text variant');
       if (!(typeof c.text === 'string' || (obj(c.text) && typeof c.text.path === 'string'))) throw Error('Invalid Text');
       const variants: Record<string, string> = { h1: 'h1', h2: 'h2', h3: 'h3', h4: 'h4', h5: 'h5', caption: 'small', body: 'p' };
-      const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant] : 'p';
+      const tag = typeof c.variant === 'string' && Object.hasOwn(variants, c.variant) ? variants[c.variant]! : 'p';
       // A heading with no text has no accessible name, so an empty one is a hidden span until the value is set.
       // Both elements exist from the start, so a data update only swaps them and never creates one.
       const heading = tag !== 'p' && tag !== 'small';
@@ -242,8 +242,8 @@ export function basicRegistry(): ComponentRegistry {
         const element = doc.createElement('div');
         element.style.display = 'flex';
         element.style.flexDirection = type === 'Column' ? 'column' : 'row';
-        if (typeof c.justify === 'string') element.style.justifyContent = justify[c.justify];
-        if (typeof c.align === 'string') element.style.alignItems = align[c.align];
+        if (typeof c.justify === 'string') element.style.justifyContent = justify[c.justify]!;
+        if (typeof c.align === 'string') element.style.alignItems = align[c.align]!;
         for (const childId of children(c)) element.appendChild(child(childId));
         return element;
       },
@@ -397,8 +397,8 @@ export class A2UIRenderer {
   apply(message: unknown): void {
     if (!obj(message) || message.version !== 'v0.9.1') throw Error('Unsupported A2UI version');
     const keys = ['createSurface', 'updateComponents', 'updateDataModel', 'deleteSurface'].filter(k => Object.hasOwn(message, k));
-    if (keys.length !== 1 || !only(message, ['version', keys[0]]) || !obj(message[keys[0]])) throw Error('Invalid A2UI message');
-    const kind = keys[0],
+    if (keys.length !== 1 || !only(message, ['version', keys[0]!]) || !obj(message[keys[0]!])) throw Error('Invalid A2UI message');
+    const kind = keys[0]!,
       payload = message[kind] as Obj;
     if (!id(payload.surfaceId)) throw Error('Invalid surface ID');
     const surfaceId = payload.surfaceId;
@@ -653,14 +653,14 @@ export class ClientPublishedCache {
     const key = scopeKey(scope);
     if (key !== this.key) {
       this.generation++;
-      this.entry = undefined;
+      delete this.entry;
       this.scope = structuredClone(scope);
       this.key = key;
     }
   }
   clear(): void {
     this.generation++;
-    this.entry = undefined;
+    delete this.entry;
   }
   async refresh(): Promise<ClientPublication> {
     const generation = this.generation,

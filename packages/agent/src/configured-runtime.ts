@@ -447,8 +447,14 @@ export async function createConfiguredAgentRun(
         let response;
         try {
           response = cost
-            ? await limited.invokeLimitedCost!(messages, { signal: options?.signal, maxTotalTokens: reserved, maxCostMicros: maxCostMicrosPerCall!, currency: currency!, callId })
-            : await limited.invokeLimited!(messages, { signal: options?.signal, maxTotalTokens: reserved, callId });
+            ? await limited.invokeLimitedCost!(messages, {
+                ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+                maxTotalTokens: reserved,
+                maxCostMicros: maxCostMicrosPerCall!,
+                currency: currency!,
+                callId
+              })
+            : await limited.invokeLimited!(messages, { ...(options?.signal !== undefined ? { signal: options.signal } : {}), maxTotalTokens: reserved, callId });
         } catch (error) {
           /* A refusal before anything was sent used nothing: release the reservation instead of leaving the run uncertain. */ if (hadNoEffect(error))
             await budgetStore.settle(callId, 0, cost ? 0 : undefined);
@@ -485,9 +491,16 @@ export async function createConfiguredAgentRun(
     const untraced = activeModel;
     activeModel = { invoke: (messages, options) => observed('model', () => untraced.invoke(messages, options)) };
   }
-  const adapter = new LangGraphAGUIAdapter(createToolCallingModel(activeModel, tools, { maxTurns: effectiveMaxTurns, checkpoint, systemPrompt: snapshot.manifest.instructions }), {
-    direct: !!checkpoint
-  });
+  const adapter = new LangGraphAGUIAdapter(
+    createToolCallingModel(activeModel, tools, {
+      maxTurns: effectiveMaxTurns,
+      ...(checkpoint !== undefined ? { checkpoint } : {}),
+      ...(snapshot.manifest.instructions !== undefined ? { systemPrompt: snapshot.manifest.instructions } : {})
+    }),
+    {
+      direct: !!checkpoint
+    }
+  );
   let used = false;
   return {
     pendingApproval: () => (pendingActionId ? { actionId: pendingActionId } : undefined),

@@ -286,8 +286,8 @@ export function registerDataMigrationApply(registry: CapabilityRegistry, options
             fromVersion: fixed.fromVersion,
             toVersion: fixed.toVersion,
             digest: safe.digest,
-            outputDigest: safe.outputDigest,
-            planDigest: safe.planDigest,
+            ...(safe.outputDigest !== undefined ? { outputDigest: safe.outputDigest } : {}),
+            ...(safe.planDigest !== undefined ? { planDigest: safe.planDigest } : {}),
             transform: fixed.transform,
             validate: fixed.validate,
             evidence
@@ -296,8 +296,8 @@ export function registerDataMigrationApply(registry: CapabilityRegistry, options
             fromVersion: fixed.fromVersion,
             targetVersion: fixed.targetVersion,
             digest: safe.digest,
-            outputDigest: safe.outputDigest,
-            planDigest: safe.planDigest,
+            ...(safe.outputDigest !== undefined ? { outputDigest: safe.outputDigest } : {}),
+            ...(safe.planDigest !== undefined ? { planDigest: safe.planDigest } : {}),
             transform: fixed.transform,
             validate: fixed.validate,
             evidence

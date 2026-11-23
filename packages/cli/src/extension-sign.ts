@@ -1,7 +1,15 @@
 import { open, writeFile } from 'node:fs/promises';
 import { createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
-import { checkExtensionCompatibility, computeExtensionIntegrity, signExtensionManifest, verifySignedExtensionManifest, type ExtensionManifest, type ExtensionSigningPolicy } from '@app-mixer/core';
+import {
+  checkExtensionCompatibility,
+  computeExtensionIntegrity,
+  signExtensionManifest,
+  verifySignedExtensionManifest,
+  type ExtensionManifest,
+  type ExtensionReference,
+  type ExtensionSigningPolicy
+} from '@app-mixer/core';
 
 // Bounded reads do not trust a file size that can change while it is being read.
 async function readBounded(path: string, max: number): Promise<Buffer> {
@@ -105,7 +113,7 @@ export async function checkExtensionSetFiles(setPath: string, hostPath: string, 
     requirements: unknown = JSON.parse((await readBounded(requirementsPath, 1024 * 1024)).toString('utf8'));
   for (const [id, path] of Object.entries(keys)) publicKeys.set(id, await readPublicKey(resolve(base, path as string)));
   const policy: ExtensionSigningPolicy | undefined = Object.hasOwn(input, 'allowedExtensions')
-    ? { trustedKeys: Object.fromEntries(publicKeys), allowedExtensions: (input as { allowedExtensions: ExtensionSigningPolicy['allowedExtensions'] }).allowedExtensions }
+    ? { trustedKeys: Object.fromEntries(publicKeys), allowedExtensions: (input as { allowedExtensions: Record<string, ExtensionReference[]> }).allowedExtensions }
     : undefined;
   for (const entry of artifacts) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).length !== 3 || !['manifest', 'package', 'keyId'].every(key => Object.hasOwn(entry, key)))

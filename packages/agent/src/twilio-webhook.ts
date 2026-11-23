@@ -64,9 +64,9 @@ export function createTwilioMessageWebhookAdapter(options: TwilioMessageWebhookO
       verified.delete(req);
       let signature: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'x-twilio-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'x-twilio-signature') {
           if (signature !== undefined) return undefined;
-          signature = req.rawHeaders[i + 1];
+          signature = req.rawHeaders[i + 1]!;
         }
       if (!signature || !/^[A-Za-z0-9+/]{27}=$/.test(signature) || Buffer.from(signature, 'base64').toString('base64') !== signature) return undefined;
       let params: Record<string, string>;
@@ -88,7 +88,7 @@ export function createTwilioMessageWebhookAdapter(options: TwilioMessageWebhookO
       const payload = form(body);
       if (payload.AccountSid !== accountSid || !/^(?:SM|MM)[a-fA-F0-9]{32}$/.test(payload.MessageSid ?? '') || !payload.From || !payload.To || typeof payload.Body !== 'string')
         throw Error('Invalid Twilio event');
-      return { agentId, eventId: payload.MessageSid, eventType: 'twilio.message', payload };
+      return { agentId, eventId: payload.MessageSid!, eventType: 'twilio.message', payload };
     }
   };
 }

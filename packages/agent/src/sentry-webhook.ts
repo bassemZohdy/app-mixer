@@ -39,9 +39,9 @@ export function createSentryWebhookAdapter(options: SentryWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let signature: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'sentry-hook-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'sentry-hook-signature') {
           if (signature !== undefined) return undefined;
-          signature = req.rawHeaders[i + 1];
+          signature = req.rawHeaders[i + 1]!;
         }
       if (!signature || !/^[a-f0-9]{64}$/.test(signature)) return undefined;
       const actual = Buffer.from(signature, 'hex');
@@ -62,8 +62,9 @@ export function createSentryWebhookAdapter(options: SentryWebhookOptions) {
         data = payload.data;
       // The resource name comes from the signed data object (for example `issue`), never from the unsigned Sentry-Hook-Resource header.
       const resources = object(data) ? Object.keys(data) : [];
-      if (typeof payload.action !== 'string' || !/^[a-z_]{1,32}$/.test(payload.action) || resources.length !== 1 || !/^[a-z_]{1,32}$/.test(resources[0])) throw Error('Invalid Sentry webhook payload');
-      return { agentId, eventType: `sentry.${resources[0]}.${payload.action}`, eventId: 'sha256:' + createHash('sha256').update(body).digest('hex'), payload };
+      if (typeof payload.action !== 'string' || !/^[a-z_]{1,32}$/.test(payload.action) || resources.length !== 1 || !/^[a-z_]{1,32}$/.test(resources[0]!))
+        throw Error('Invalid Sentry webhook payload');
+      return { agentId, eventType: `sentry.${resources[0]!}.${payload.action}`, eventId: 'sha256:' + createHash('sha256').update(body).digest('hex'), payload };
     }
   };
 }

@@ -56,13 +56,13 @@ export function createSlackWebhookAdapter(options: SlackWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let timestamp: string | undefined, signature: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        const name = req.rawHeaders[i].toLowerCase();
+        const name = req.rawHeaders[i]!.toLowerCase();
         if (name === 'x-slack-request-timestamp') {
           if (timestamp !== undefined) return undefined;
-          timestamp = req.rawHeaders[i + 1];
+          timestamp = req.rawHeaders[i + 1]!;
         } else if (name === 'x-slack-signature') {
           if (signature !== undefined) return undefined;
-          signature = req.rawHeaders[i + 1];
+          signature = req.rawHeaders[i + 1]!;
         }
       }
       if (!timestamp || !/^(0|[1-9][0-9]{0,12})$/.test(timestamp) || !signature || !/^v0=[a-f0-9]{64}$/.test(signature)) return undefined;

@@ -222,7 +222,10 @@ export function createExtensionRuntime(
             return operationAllowed === true;
           }
         : undefined;
-    registerDeclaredExtensionCapability(capabilities, extensions, snapshot, operation, binding.candidate, { ...binding, authorizeExtensionWithSignal });
+    registerDeclaredExtensionCapability(capabilities, extensions, snapshot, operation, binding.candidate, {
+      ...binding,
+      ...(authorizeExtensionWithSignal !== undefined ? { authorizeExtensionWithSignal } : {})
+    });
   }
   return { components, capabilities };
 }

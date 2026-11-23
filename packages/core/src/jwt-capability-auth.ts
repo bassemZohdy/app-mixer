@@ -33,12 +33,12 @@ const ecKey = (key: JSONWebKeySet['keys'][number], seen: Set<string>) => {
   )
     throw Error('Invalid JWT authentication configuration');
   try {
-    createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: key.x, y: key.y }, format: 'jwk' });
+    createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: key.x!, y: key.y! }, format: 'jwk' });
   } catch {
     throw Error('Invalid JWT authentication configuration');
   }
   seen.add(key.kid);
-  return { kty: 'EC', kid: key.kid, crv: 'P-256', x: key.x, y: key.y, alg: 'ES256', use: 'sig' };
+  return { kty: 'EC', kid: key.kid, crv: 'P-256', x: key.x!, y: key.y!, alg: 'ES256', use: 'sig' };
 };
 /** Authenticate RFC 9068 RS256 or ES256 (P-256) access tokens against host-managed public keys. */
 export function createJwtCapabilityAuthenticator(options: JwtCapabilityAuthOptions) {
@@ -88,7 +88,7 @@ export function createJwtCapabilityAuthenticator(options: JwtCapabilityAuthOptio
         )
           throw Error('Invalid JWT authentication configuration');
         const modulus = Buffer.from(key.n, 'base64url');
-        if (modulus.length < 256 || modulus.length > 512 || (modulus.length === 256 && modulus[0] < 128) || modulus.toString('base64url') !== key.n || modulus[0] === 0)
+        if (modulus.length < 256 || modulus.length > 512 || (modulus.length === 256 && modulus[0]! < 128) || modulus.toString('base64url') !== key.n || modulus[0]! === 0)
           throw Error('Invalid JWT authentication configuration');
         seen.add(key.kid);
         return { kty: 'RSA', kid: key.kid, n: key.n, e: key.e, alg: 'RS256', use: 'sig' };
@@ -114,15 +114,15 @@ export function createJwtCapabilityAuthenticator(options: JwtCapabilityAuthOptio
     const snapshot = current;
     let authorization: string | undefined;
     for (let i = 0; i < req.rawHeaders.length; i += 2)
-      if (req.rawHeaders[i].toLowerCase() === 'authorization') {
+      if (req.rawHeaders[i]!.toLowerCase() === 'authorization') {
         if (authorization !== undefined) return undefined;
-        authorization = req.rawHeaders[i + 1];
+        authorization = req.rawHeaders[i + 1]!;
       }
     if (!authorization || authorization.length > 8192) return undefined;
     const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec(authorization);
     if (!match) return undefined;
     try {
-      const { payload, protectedHeader } = await jwtVerify(match[1], snapshot.jwks, {
+      const { payload, protectedHeader } = await jwtVerify(match[1]!, snapshot.jwks, {
         issuer: issuerValue,
         audience,
         algorithms: ['RS256', 'ES256'],

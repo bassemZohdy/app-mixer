@@ -20,7 +20,7 @@ export class PostgresAgentTokenBudgetFoundation {
   private readonly runId: string;
   private readonly token: string;
   private readonly maxTokens: number;
-  private readonly cost?: { currency: string; maxMicros: number };
+  private readonly cost?: { currency: string; maxMicros: number } | undefined;
   private readonly query: Query;
   private readonly transaction: Options['transaction'];
   constructor(options: Options) {

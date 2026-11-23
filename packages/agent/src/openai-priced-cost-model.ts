@@ -150,7 +150,7 @@ export function createOpenAIPricedCostModel(options: Options): CostLimitedToolMo
           store: false,
           service_tier: 'default'
         }),
-        signal,
+        signal: signal ?? null,
         redirect: 'error'
       });
       if (!active(signal) || !response.ok || !response.body) {

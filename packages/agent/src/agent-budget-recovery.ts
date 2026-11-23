@@ -20,12 +20,12 @@ const id = isIdentifier;
 /** Host-authorized, provider-verified reconciliation for one fixed run. */
 export class AgentBudgetRecovery {
   private readonly budget: SqliteAgentTokenBudget | PostgresAgentTokenBudgetFoundation;
-  private readonly sharedCost?: PostgresAgentSharedCost;
+  private readonly sharedCost?: PostgresAgentSharedCost | undefined;
   private readonly target: Target;
   private readonly authorize: Options['authorize'];
   private readonly verify: Options['verify'];
-  private readonly timeoutMs?: number;
-  private readonly maxPending?: number;
+  private readonly timeoutMs?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private inFlight = 0;
   constructor(options: Options) {
     if (
@@ -188,7 +188,7 @@ export class AgentBudgetRecovery {
       limit = options.limit ?? 50;
     return this.bounded(async signal => {
       await this.permit(who, 'pending', undefined, signal);
-      const rows = await this.budget.listOutstanding({ after, limit: limit + 1 });
+      const rows = await this.budget.listOutstanding({ ...(after !== undefined ? { after } : {}), limit: limit + 1 });
       this.active(signal);
       await this.permit(who, 'pending', undefined, signal);
       const items = rows.slice(0, limit);
@@ -198,7 +198,7 @@ export class AgentBudgetRecovery {
   async history(actor: Actor, options: { after?: number; limit?: number } = {}, callerSignal?: AbortSignal): Promise<AgentBudgetReconciliationEvent[]> {
     const who = this.actor(actor);
     if (!options || typeof options !== 'object' || Array.isArray(options) || Object.keys(options).some(key => key !== 'after' && key !== 'limit')) throw Error('Invalid budget recovery history');
-    const safe = { after: options.after, limit: options.limit };
+    const safe = { ...(options.after !== undefined ? { after: options.after } : {}), ...(options.limit !== undefined ? { limit: options.limit } : {}) };
     return this.bounded(async signal => {
       await this.permit(who, 'history', undefined, signal);
       const rows = await this.budget.reconciliationHistory(safe);

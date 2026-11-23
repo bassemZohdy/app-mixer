@@ -104,8 +104,8 @@ export class AgentCombinedMetrics {
       bytes += Buffer.byteLength(part);
       if (bytes > 65536) throw Error('Invalid combined metrics data');
       for (const match of part.matchAll(/^# TYPE ([a-zA-Z_:][a-zA-Z0-9_:]*) /gm)) {
-        if (names.has(match[1])) throw Error('Duplicate combined metric');
-        names.add(match[1]);
+        if (names.has(match[1]!)) throw Error('Duplicate combined metric');
+        names.add(match[1]!);
       }
       parts.push(part);
     }

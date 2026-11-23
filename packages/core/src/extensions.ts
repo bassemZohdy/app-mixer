@@ -351,7 +351,7 @@ export function checkExtensionCompatibility(manifests: unknown, host: unknown, r
       approvals.has(a.id)
     )
       throw Error('Invalid extension approval');
-    approvals.set(a.id, { version: a.version, scope: a.scope, permissions: a.permissions, integrity: a.integrity as string | undefined });
+    approvals.set(a.id, { version: a.version, scope: a.scope, permissions: a.permissions, ...(typeof a.integrity === 'string' ? { integrity: a.integrity } : {}) });
   }
   const errors: string[] = [],
     ids = new Set<string>();

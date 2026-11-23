@@ -281,7 +281,7 @@ export function createAgentApprovalServer(options: Options): Server {
         if (noticeMatch) {
           let agentId: string;
           try {
-            agentId = decodeURIComponent(noticeMatch[1]);
+            agentId = decodeURIComponent(noticeMatch[1]!);
           } catch {
             reply(res, 400, { error: 'Invalid request' });
             return;
@@ -383,8 +383,8 @@ export function createAgentApprovalServer(options: Options): Server {
         }
         let agentId: string, runId: string, actionId: string | undefined;
         try {
-          agentId = decodeURIComponent(match[1]);
-          runId = decodeURIComponent(match[2]);
+          agentId = decodeURIComponent(match[1]!);
+          runId = decodeURIComponent(match[2]!);
           actionId = match[3] ? decodeURIComponent(match[3]) : undefined;
         } catch {
           reply(res, 400, { error: 'Invalid request' });

@@ -151,7 +151,7 @@ export class SqliteAgentTriggerRetention {
       };
     });
     await permit();
-    return { items, ...(rows.length > limit ? { nextAfter: items[items.length - 1].runId } : {}) };
+    return { items, ...(rows.length > limit ? { nextAfter: items[items.length - 1]!.runId } : {}) };
   }
   async redact(actor: Actor, runId: string, now = Date.now(), signal?: AbortSignal, eligibility?: { minAgeMs: number; clock: () => number; basis?: 'receipt' | 'completion' }): Promise<boolean> {
     const who = this.actor(actor, runId);

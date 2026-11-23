@@ -80,7 +80,7 @@ export class AgentTriggerRetentionWorker {
     try {
       page = await this.retention.listCandidates(
         { ...this.actor },
-        { after: this.cursor, limit: this.maxPerPass, ...(this.ageFrom === 'completion' ? { completedBefore: cutoff } : { receivedBefore: cutoff }) },
+        { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass, ...(this.ageFrom === 'completion' ? { completedBefore: cutoff } : { receivedBefore: cutoff }) },
         signal
       );
     } catch (error) {
@@ -107,7 +107,9 @@ export class AgentTriggerRetentionWorker {
         if (!signal.aborted) this.report(error, candidate.runId);
       }
     }
-    if (!signal.aborted) this.cursor = page.nextAfter;
+    if (!signal.aborted)
+      if (page.nextAfter === undefined) delete this.cursor;
+      else this.cursor = page.nextAfter;
     return count;
   }
   private begin(): Promise<number> {
@@ -117,8 +119,8 @@ export class AgentTriggerRetentionWorker {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -146,7 +148,7 @@ export class AgentTriggerRetentionWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

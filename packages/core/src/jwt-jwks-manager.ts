@@ -213,8 +213,8 @@ export class JwtJwksManager {
     this.pending = operation;
     void operation
       .finally(() => {
-        if (this.pending === operation) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === operation) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return operation;
@@ -242,7 +242,7 @@ export class JwtJwksManager {
     this.active = false;
     this.cancelled++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

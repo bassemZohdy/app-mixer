@@ -54,7 +54,7 @@ const reply = (res: ServerResponse, status: number, body: unknown) => {
   res.end(JSON.stringify(body));
 };
 async function readBytes(req: IncomingMessage, contentType?: Options['contentType']): Promise<Buffer> {
-  if (req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i].toLowerCase() === 'content-type').length !== 1) throw Error('CONTENT_TYPE');
+  if (req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i]!.toLowerCase() === 'content-type').length !== 1) throw Error('CONTENT_TYPE');
   const expected = contentType === 'application/x-www-form-urlencoded' ? /^application\/x-www-form-urlencoded(?:\s*;|$)/i : /^application\/json(?:\s*;|$)/i;
   try {
     return await readBodyBytes(req, { maxBytes: 256 * 1024, contentType: expected });

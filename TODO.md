@@ -2,9 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **TASK-020** · P2 · mid · Enable noUncheckedIndexedAccess, noImplicitOverride, noFallthroughCasesInSwitch and exactOptionalPropertyTypes in tsconfig.base.json and fix what they report
-  - Done when: every workspace compiles with the four flags on; `npm run build`
-  - State: next: decompose
 - [ ] **TASK-021** · P2 · mid · Review the 141 empty catch blocks (10 in web offline.ts, 7 in event-ingress.ts, 3 to 4 in each worker) and give background workers an optional error hook, as the remote connector's onAnchorError does
   - Done when: a failing store or callback in each worker reaches the hook, and a throwing hook is ignored; `npm run build && node --test packages/agent/test/worker-error-hooks.test.mjs`
   - State: next: decompose

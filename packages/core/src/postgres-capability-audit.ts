@@ -40,7 +40,7 @@ export class PostgresCapabilityAudit {
       stored: async () => {
         const result = await this.query('SELECT sequence FROM app_mixer_capability_audit_counters WHERE tenant_id=$1', [tenantId]);
         if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid capability audit result');
-        const stored = result.rows.length === 0 ? 0 : Number(result.rows[0].sequence);
+        const stored = result.rows.length === 0 ? 0 : Number(result.rows[0]!.sequence);
         if (!Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid capability audit result');
         return stored;
       }

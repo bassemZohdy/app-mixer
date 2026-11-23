@@ -43,9 +43,9 @@ export function createTelegramWebhookAdapter(options: TelegramWebhookOptions) {
     authenticateRaw(req: IncomingMessage, _body: Buffer): AgentEventSourceIdentity | undefined {
       let received: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'x-telegram-bot-api-secret-token') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'x-telegram-bot-api-secret-token') {
           if (received !== undefined) return undefined;
-          received = req.rawHeaders[i + 1];
+          received = req.rawHeaders[i + 1]!;
         }
       if (!secret(received)) return undefined;
       const actual = digest(received);

@@ -70,14 +70,14 @@ export function createDiscordWebhookAdapter(options: DiscordWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let signature: string | undefined, timestamp: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        const name = req.rawHeaders[i].toLowerCase();
+        const name = req.rawHeaders[i]!.toLowerCase();
         if (name === 'x-signature-ed25519') {
           if (signature !== undefined) return undefined;
-          signature = req.rawHeaders[i + 1];
+          signature = req.rawHeaders[i + 1]!;
         }
         if (name === 'x-signature-timestamp') {
           if (timestamp !== undefined) return undefined;
-          timestamp = req.rawHeaders[i + 1];
+          timestamp = req.rawHeaders[i + 1]!;
         }
       }
       if (!signature || !/^[a-f0-9]{128}$/.test(signature) || !timestamp || !/^(0|[1-9][0-9]{0,15})$/.test(timestamp)) return undefined;

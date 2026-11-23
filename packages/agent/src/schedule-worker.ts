@@ -240,7 +240,7 @@ export class AgentScheduleWorker {
         if (keepGoing()) this.cursor = { nextAt: schedule.nextAt, scheduleId: schedule.scheduleId };
       }
     }
-    if (keepGoing() && !page.next) this.cursor = undefined;
+    if (keepGoing() && !page.next) delete this.cursor;
     return fired;
   }
   private begin(keepGoing: () => boolean): Promise<number> {
@@ -250,8 +250,8 @@ export class AgentScheduleWorker {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -284,7 +284,7 @@ export class AgentScheduleWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

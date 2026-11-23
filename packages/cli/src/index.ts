@@ -93,12 +93,12 @@ if (isMain) {
   };
   if ((command === '--help' || command === '-h') && args.length === 0) console.log(usageText);
   else if (command === '--version' && args.length === 0) console.log(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
-  else if (command === 'create' && args.length === 1) createProject(args[0]).then(p => console.log('Created ' + p), fail);
-  else if (command === 'extension-sign' && args.length === 5) signExtensionFiles(args[0], args[1], args[2], args[3], args[4]).then(() => console.log('Signed extension manifest written'), fail);
-  else if (command === 'extension-verify' && args.length === 4) verifyExtensionFiles(args[0], args[1], args[2], args[3]).then(m => console.log(`Verified ${m.id}@${m.version} (${m.scope})`), fail);
+  else if (command === 'create' && args.length === 1) createProject(args[0]!).then(p => console.log('Created ' + p), fail);
+  else if (command === 'extension-sign' && args.length === 5) signExtensionFiles(args[0]!, args[1]!, args[2]!, args[3]!, args[4]!).then(() => console.log('Signed extension manifest written'), fail);
+  else if (command === 'extension-verify' && args.length === 4) verifyExtensionFiles(args[0]!, args[1]!, args[2]!, args[3]!).then(m => console.log(`Verified ${m.id}@${m.version} (${m.scope})`), fail);
   else if (command === 'extension-check' && args.length === 6)
-    checkExtensionFiles(args[0], args[1], args[2], args[3], args[4], args[5]).then(m => console.log(`Compatible ${m.id}@${m.version} (${m.scope})`), fail);
-  else if (command === 'extension-check-set' && args.length === 3) checkExtensionSetFiles(args[0], args[1], args[2]).then(m => console.log(`Compatible extensions: ${m.length}`), fail);
+    checkExtensionFiles(args[0]!, args[1]!, args[2]!, args[3]!, args[4]!, args[5]!).then(m => console.log(`Compatible ${m.id}@${m.version} (${m.scope})`), fail);
+  else if (command === 'extension-check-set' && args.length === 3) checkExtensionSetFiles(args[0]!, args[1]!, args[2]!).then(m => console.log(`Compatible extensions: ${m.length}`), fail);
   else {
     console.error(usageText);
     process.exitCode = 1;

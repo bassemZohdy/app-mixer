@@ -30,7 +30,9 @@ export function createOpenAIToolModel(config: OpenAIModelConfig, tools: Capabili
   const fields = { model: config.model, apiKey: config.apiKey, ...(config.baseURL ? { configuration: { baseURL: config.baseURL } } : {}) };
   return {
     invoke: async (messages, options) =>
-      (await openAIChat(fields)).bindTools(tools).invoke(config.systemPrompt ? [new SystemMessage(config.systemPrompt), ...messages] : messages, { signal: options?.signal })
+      (await openAIChat(fields))
+        .bindTools(tools)
+        .invoke(config.systemPrompt ? [new SystemMessage(config.systemPrompt), ...messages] : messages, ...(options?.signal !== undefined ? [{ signal: options.signal }] : []))
   };
 }
 export type OpenAIPricing = { currency: string; inputMicrosPerMillionTokens: number; outputMicrosPerMillionTokens: number };
@@ -188,7 +190,9 @@ export function createToolCallingModel(
         .compile(checkpoint ? { checkpointer: checkpoint.saver } : {});
       // Wait for each checkpoint before advancing: async stores can otherwise
       // lose a completed tool step when a later graph step fails or the worker exits.
-      const config = checkpoint ? { signal, durability: 'sync' as const, configurable: { thread_id: checkpoint.threadId } } : { signal };
+      const config = checkpoint
+        ? { ...(signal !== undefined ? { signal } : {}), durability: 'sync' as const, configurable: { thread_id: checkpoint.threadId } }
+        : { ...(signal !== undefined ? { signal } : {}) };
       if (checkpoint) {
         const existing = await checkpoint.saver.getTuple(config);
         if (checkpoint.resume && !existing) throw Error('Checkpoint unavailable');

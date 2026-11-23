@@ -3,7 +3,7 @@ import { MemoryAccessDenied, SqliteAgentMemory, type AgentMemoryScope, type Agen
 import { isIdentifier } from './validation.js';
 
 type Embedder = { modelId: string; dimensions: number; embed: (text: string) => Promise<number[]> };
-export type SemanticMemorySearchOptions = { minSimilarity?: number };
+export type SemanticMemorySearchOptions = { minSimilarity?: number | undefined };
 export const validSimilarity = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= -1 && value <= 1;
 export type SemanticMemoryRecord = { id: string; revision: number; text: string; provenance: AgentMemoryProvenance; expiresAt: number };
 export type SemanticMemoryHit = SemanticMemoryRecord & { score: number };
@@ -235,7 +235,7 @@ export class AgentSemanticMemory {
       pages = 0;
     do {
       if (++pages > 11) throw Error('Semantic memory scan limit exceeded');
-      const page = await this.memory.list(safeActor, safeScope, { after, limit: 100 });
+      const page = await this.memory.list(safeActor, safeScope, { ...(after !== undefined ? { after } : {}), limit: 100 });
       for (const row of page.items) {
         const v = row.value;
         if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
@@ -251,7 +251,7 @@ export class AgentSemanticMemory {
           -1,
           Math.min(
             1,
-            vector.reduce((sum, value, index) => sum + value * queryVector[index], 0)
+            vector.reduce((sum, value, index) => sum + value * queryVector[index]!, 0)
           )
         );
         if (minSimilarity === undefined || score >= minSimilarity) matches.push({ id: row.id, revision: row.revision, text: entry.text, score, provenance: row.provenance, expiresAt: row.expiresAt });

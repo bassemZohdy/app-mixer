@@ -59,7 +59,7 @@ function createCapabilityHandler(
         }
         if (!actor) {
           try {
-            await auditFailure({ reason: 'unauthenticated', remoteAddress: req.socket.remoteAddress });
+            await auditFailure({ reason: 'unauthenticated', ...(req.socket.remoteAddress !== undefined ? { remoteAddress: req.socket.remoteAddress } : {}) });
           } catch {
             reply(res, 503, { error: 'Audit unavailable' });
             return;
@@ -74,7 +74,7 @@ function createCapabilityHandler(
         }
         let operationId: string;
         try {
-          operationId = decodeURIComponent(match[1]);
+          operationId = decodeURIComponent(match[1]!);
         } catch {
           reply(res, 400, { error: 'Invalid capability ID' });
           return;

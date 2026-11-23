@@ -27,8 +27,8 @@ export class AgentWakeupRetentionWorker {
   private readonly pollMs: number;
   private readonly clock: () => number;
   private readonly onError: Options['onError'];
-  private readonly authorizationTimeoutMs?: number;
-  private readonly maxPendingAuthorizations?: number;
+  private readonly authorizationTimeoutMs?: number | undefined;
+  private readonly maxPendingAuthorizations?: number | undefined;
   private authorizationsInFlight = 0;
   private cursor?: number;
   private active = false;
@@ -127,7 +127,7 @@ export class AgentWakeupRetentionWorker {
     try {
       page = await this.retention.listCandidates(
         { ...this.actor },
-        { after: this.cursor, limit: this.maxPerPass, ...(this.ageFrom === 'completion' ? { completedBefore: cutoff } : { observedBefore: cutoff }) },
+        { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass, ...(this.ageFrom === 'completion' ? { completedBefore: cutoff } : { observedBefore: cutoff }) },
         signal
       );
     } catch (error) {
@@ -154,7 +154,9 @@ export class AgentWakeupRetentionWorker {
         if (!signal.aborted) this.report(error, candidate.runId);
       }
     }
-    if (!signal.aborted) this.cursor = page.nextAfter;
+    if (!signal.aborted)
+      if (page.nextAfter === undefined) delete this.cursor;
+      else this.cursor = page.nextAfter;
     return count;
   }
   private begin(): Promise<number> {
@@ -164,8 +166,8 @@ export class AgentWakeupRetentionWorker {
     this.pending = pending;
     void pending
       .finally(() => {
-        if (this.pending === pending) this.pending = undefined;
-        if (this.controller === controller) this.controller = undefined;
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
       })
       .catch(() => {});
     return pending;
@@ -193,7 +195,7 @@ export class AgentWakeupRetentionWorker {
     this.active = false;
     this.generation++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
+    delete this.timer;
     this.controller?.abort();
     const pending = this.pending;
     if (pending)

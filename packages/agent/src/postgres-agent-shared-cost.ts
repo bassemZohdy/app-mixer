@@ -1,4 +1,4 @@
-﻿import { isIdentifier, isNonNegativeInteger } from './validation.js';
+import { isIdentifier, isNonNegativeInteger } from './validation.js';
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 type Actor = { tenantId: string; principalId: string };
 type Scope = { tenantId: string; budgetId: string; currency: string; maxMicros: number };
@@ -50,8 +50,8 @@ export class PostgresAgentSharedCost {
   private readonly queryWithSignal: Options['queryWithSignal'];
   private readonly transaction: Options['transaction'];
   private readonly authorize: Options['authorize'];
-  private readonly timeoutMs?: number;
-  private readonly maxPending?: number;
+  private readonly timeoutMs?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private pendingAuthorizations = 0;
   constructor(options: Options) {
     const scope = options?.scope;
@@ -290,7 +290,7 @@ export class PostgresAgentSharedCost {
     const { tenantId, budgetId, currency, maxMicros } = this.scope;
     await query('INSERT INTO app_mixer_shared_cost_budgets (tenant_id,budget_id,currency,max_micros) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING', [tenantId, budgetId, currency, maxMicros]);
     const rows = (await query('SELECT currency,max_micros FROM app_mixer_shared_cost_budgets WHERE tenant_id=$1 AND budget_id=$2 FOR UPDATE', [tenantId, budgetId])).rows;
-    if (!Array.isArray(rows) || rows.length !== 1 || rows[0].currency !== currency || dbNumber(rows[0].max_micros) !== maxMicros) throw Error('Shared cost budget conflict');
+    if (!Array.isArray(rows) || rows.length !== 1 || rows[0]!.currency !== currency || dbNumber(rows[0]!.max_micros) !== maxMicros) throw Error('Shared cost budget conflict');
   }
   private async checkReadConfig(): Promise<void> {
     const rows = (await this.query('SELECT currency,max_micros FROM app_mixer_shared_cost_budgets WHERE tenant_id=$1 AND budget_id=$2', [this.scope.tenantId, this.scope.budgetId])).rows;
@@ -390,7 +390,7 @@ export class PostgresAgentSharedCost {
           )
         ).rows;
         if (rows.length !== 1) throw Error('Invalid shared cost data');
-        return this.record(rows[0]);
+        return this.record(rows[0]!);
       });
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && (error as { code: unknown }).code === '23505') throw Error('Shared cost call already exists');
@@ -467,7 +467,7 @@ export class PostgresAgentSharedCost {
           `INSERT INTO app_mixer_shared_cost_reconciliations (tenant_id,budget_id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,${NOW})`,
           [...this.values(selected), who.principalId, reference, usedMicros]
         );
-      return this.record(rows[0]);
+      return this.record(rows[0]!);
     });
   }
   async get(actor: Actor, call: Call): Promise<SharedCostReservation | undefined> {

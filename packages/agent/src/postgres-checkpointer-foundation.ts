@@ -163,7 +163,7 @@ export class PostgresAgentCheckpointerFoundation extends BaseCheckpointSaver {
       ns = c?.checkpoint_ns ?? '',
       checkpointId = c?.checkpoint_id;
     if (thread !== this.runId || !valid(ns, true) || (checkpointId !== undefined && !valid(checkpointId)) || (requireId && !valid(checkpointId))) throw Error('Invalid checkpoint scope');
-    return { ns, checkpointId: checkpointId as string | undefined };
+    return { ns, ...(checkpointId !== undefined ? { checkpointId } : {}) };
   }
   private args(ns: string): [string, string, string, string] {
     return [this.scope.tenantId, this.scope.agentId, this.runId, ns];

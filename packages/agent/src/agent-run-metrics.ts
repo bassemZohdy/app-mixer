@@ -65,8 +65,8 @@ export class SqliteAgentRunMetrics {
   private readonly includeActionBacklog: boolean;
   private readonly includeBudgetBacklog: boolean;
   private readonly includeScheduleBacklog: boolean;
-  private readonly retentionBacklog?: { minAgeMs: number; ageFrom: 'receipt' | 'completion' };
-  private readonly wakeupRetentionBacklog?: { minAgeMs: number; ageFrom: 'observed' | 'completion' };
+  private readonly retentionBacklog?: { minAgeMs: number; ageFrom: 'receipt' | 'completion' } | undefined;
+  private readonly wakeupRetentionBacklog?: { minAgeMs: number; ageFrom: 'observed' | 'completion' } | undefined;
   private readonly clock: () => number;
   constructor(path: string, options: AgentRunMetricsOptions) {
     if (

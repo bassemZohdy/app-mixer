@@ -12,8 +12,8 @@ export class PostgresAgentWakeupRetentionFoundation {
   private readonly scopePolicy: Options['authorizeScope'];
   private readonly targetPolicy: Options['authorize'];
   private readonly discovery: Options['authorizeDiscovery'];
-  private readonly timeout?: number;
-  private readonly maxPending?: number;
+  private readonly timeout?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private pending = 0;
   constructor(options: Options) {
     if (

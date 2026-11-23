@@ -103,7 +103,7 @@ export function registerStagedListCapability(registry: CapabilityRegistry, store
         };
         const associated = aad(actor, applicationId, externalOperationId, capabilityId, value.status),
           after = value.cursor === undefined ? undefined : unseal(key, associated, value.cursor),
-          page = store.list(scope, externalOperationId, value.status, { after, limit: value.limit ?? 50 }),
+          page = store.list(scope, externalOperationId, value.status, { ...(after !== undefined ? { after } : {}), limit: value.limit ?? 50 }),
           items: { id: string; status: StagedStatus }[] = [];
         for (const item of page.items) {
           active();

@@ -76,6 +76,20 @@ export async function discoverOidcJwks(options: OidcDiscoveryOptions): Promise<{
 export async function createOidcJwtJwksManager(options: OidcJwtJwksManagerOptions): Promise<JwtJwksManager> {
   if (!options || typeof options.authenticator?.isIssuer !== 'function' || !options.authenticator.isIssuer(options.issuer)) throw Error('OIDC issuer mismatch');
   const { issuer, allowedJwksOrigins, authenticator, pollMs, maxStaleMs, timeoutMs, onError, allowLoopbackHttp, clock } = options;
-  const metadata = await discoverOidcJwks({ issuer, timeoutMs, allowedJwksOrigins: allowedJwksOrigins?.slice(), allowLoopbackHttp });
-  return new JwtJwksManager({ authenticator, jwksUrl: metadata.jwksUrl, pollMs, maxStaleMs, timeoutMs, onError, allowLoopbackHttp, clock });
+  const metadata = await discoverOidcJwks({
+    issuer,
+    timeoutMs,
+    ...(allowedJwksOrigins !== undefined ? { allowedJwksOrigins: allowedJwksOrigins.slice() } : {}),
+    ...(allowLoopbackHttp !== undefined ? { allowLoopbackHttp } : {})
+  });
+  return new JwtJwksManager({
+    authenticator,
+    jwksUrl: metadata.jwksUrl,
+    pollMs,
+    maxStaleMs,
+    timeoutMs,
+    onError,
+    ...(allowLoopbackHttp !== undefined ? { allowLoopbackHttp } : {}),
+    ...(clock !== undefined ? { clock } : {})
+  });
 }

@@ -14,8 +14,8 @@ export class SqliteAgentBudgetRecoveryDiscovery {
   private readonly db: DatabaseSync;
   private readonly scope: AgentRunScope;
   private readonly authorize: Options['authorize'];
-  private readonly timeoutMs?: number;
-  private readonly maxPending?: number;
+  private readonly timeoutMs?: number | undefined;
+  private readonly maxPending?: number | undefined;
   private pending = 0;
   constructor(path: string, options: Options) {
     if (

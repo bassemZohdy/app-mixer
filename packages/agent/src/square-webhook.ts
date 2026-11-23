@@ -83,9 +83,9 @@ export function createSquareWebhookAdapter(options: SquareWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let signature: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'x-square-hmacsha256-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'x-square-hmacsha256-signature') {
           if (signature !== undefined) return undefined;
-          signature = req.rawHeaders[i + 1];
+          signature = req.rawHeaders[i + 1]!;
         }
       if (!signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return undefined;
       const actual = Buffer.from(signature, 'base64');

@@ -154,11 +154,11 @@ export function registerAgentExpiredLeaseDiscovery(registry: Registry, options: 
         const who = { tenantId: actor.tenantId, principalId: actor.principalId },
           after = query.cursor === undefined ? undefined : unseal(key, scope, who, operationId, query.cursor);
         let page: { items: ExpiredAgentLease[]; next?: Cursor };
-        if (runs instanceof PostgresAgentRunLifecycleFoundation) page = await runs.expiredLeasePage(scope, { after, limit });
+        if (runs instanceof PostgresAgentRunLifecycleFoundation) page = await runs.expiredLeasePage(scope, { ...(after !== undefined ? { after } : {}), limit });
         else {
           const now = clock();
           if (!number(now)) throw Error('Lease discovery unavailable');
-          page = runs.expiredLeasePage(scope, now, { after, limit });
+          page = runs.expiredLeasePage(scope, now, { ...(after !== undefined ? { after } : {}), limit });
         }
         const items: ExpiredAgentLease[] = [];
         for (const lease of page.items) if (await permit(who, 'read', lease)) items.push({ ...lease });

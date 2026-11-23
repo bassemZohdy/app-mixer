@@ -85,7 +85,7 @@ export function createPricedCostLimitedToolModel(options: Options): CostLimitedT
       }
       if (allowed < 1) throw Error('Model cost limit insufficient');
       if (signal?.aborted) throw Error('Model call aborted');
-      const result = await dispatch(request, { signal, maxOutputTokens: allowed, callId });
+      const result = await dispatch(request, { ...(signal !== undefined ? { signal } : {}), maxOutputTokens: allowed, callId });
       if (!result || typeof result !== 'object') throw Error('Invalid priced model usage');
       const { message, inputTokens: actualInputTokens, outputTokens: actualOutputTokens } = result;
       if (!isAIMessage(message) || !integer(actualInputTokens) || !integer(actualOutputTokens) || actualInputTokens + actualOutputTokens > 1000000000) throw Error('Invalid priced model usage');

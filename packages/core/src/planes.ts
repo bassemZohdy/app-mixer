@@ -237,17 +237,17 @@ export function createControlPlane(
       if (proposals && proposalRoute) {
         const [, proposalId, action] = proposalRoute;
         if (req.method === 'GET' && !action) {
-          const proposal = proposals.get(proposalId);
+          const proposal = proposals.get(proposalId!);
           if (!proposal) throw new AppMixerError('not_found', 'Proposal not found');
           respond(res, 200, proposal);
           return;
         }
         if (req.method === 'POST' && action === 'approve') {
-          respond(res, 200, proposals.approve(proposalId));
+          respond(res, 200, proposals.approve(proposalId!));
           return;
         }
         if (req.method === 'POST' && action === 'reject') {
-          respond(res, 200, proposals.reject(proposalId));
+          respond(res, 200, proposals.reject(proposalId!));
           return;
         }
       }

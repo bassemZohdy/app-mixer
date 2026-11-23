@@ -342,7 +342,7 @@ export class PostgresExtensionApprovals {
   private async epoch(scope: ExtensionApprovalScope): Promise<number> {
     const result = await this.query('SELECT COALESCE(SUM(revision),0) AS epoch FROM app_mixer_extension_approvals WHERE tenant_id=$1 AND application_id=$2', [scope.tenantId, scope.applicationId]);
     if (!Array.isArray(result.rows) || result.rows.length !== 1) throw Error('Invalid extension approval result');
-    const value = Number(result.rows[0].epoch);
+    const value = Number(result.rows[0]!.epoch);
     if (!Number.isSafeInteger(value) || value < 0) throw Error('Invalid extension approval result');
     return value;
   }
@@ -443,7 +443,7 @@ export class PostgresExtensionApprovals {
     if (!Array.isArray(result?.rows) || result.rows.length > 1) throw new CapabilityOutcomeUncertainError();
     if (result.rows.length === 0) throw new AppMixerError('conflict', 'Extension approval revision conflict');
     // The decision is committed; an anchor failure leaves the anchor behind until the next check catches it up.
-    if (terminal ? String(result.rows[0].revision) !== terminalRevision : Number(result.rows[0].revision) !== expected + 1) throw new CapabilityOutcomeUncertainError();
+    if (terminal ? String(result.rows[0]!.revision) !== terminalRevision : Number(result.rows[0]!.revision) !== expected + 1) throw new CapabilityOutcomeUncertainError();
     if (this.anchor) {
       try {
         await advanceAnchor(this.anchor, extensionApprovalAnchorKey(c.scope.tenantId, c.scope.applicationId), await this.epoch(c.scope), this.onAnchorError);
@@ -489,9 +489,9 @@ export class PostgresExtensionApprovals {
     if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid extension approval result');
     await permit();
     if (!result.rows.length) return false;
-    const row = result.rows[0],
+    const row = result.rows[0]!,
       revision = approvalRevision(row.revision),
-      firstRevision = approvalRevision(first.rows[0].revision),
+      firstRevision = approvalRevision(first.rows[0]!.revision),
       expires = Number(row.expires_at);
     if (typeof row.allowed !== 'boolean' || !Number.isSafeInteger(expires) || expires < 0 || (revision.terminal && (row.allowed || expires !== 0))) throw Error('Invalid extension approval result');
     if (firstRevision.revision !== revision.revision || firstRevision.terminal !== revision.terminal) return false;
@@ -512,9 +512,9 @@ export class PostgresExtensionApprovals {
     if (!Array.isArray(current.rows) || current.rows.length > 1) throw Error('Invalid extension approval result');
     await this.permitRead(c, 'inspect', signal);
     if (!current.rows.length) throw Error('Extension approval changed');
-    const row = current.rows[0],
+    const row = current.rows[0]!,
       revision = approvalRevision(row.revision),
-      firstRevision = approvalRevision(first.rows[0].revision),
+      firstRevision = approvalRevision(first.rows[0]!.revision),
       expiresAt = Number(row.expires_at);
     if (revision.revision !== firstRevision.revision || revision.terminal !== firstRevision.terminal) throw Error('Extension approval changed');
     if (typeof row.allowed !== 'boolean' || !Number.isSafeInteger(expiresAt) || expiresAt < 0 || (revision.terminal && (row.allowed || expiresAt !== 0)))

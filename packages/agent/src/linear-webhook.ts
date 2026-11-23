@@ -71,9 +71,9 @@ export function createLinearWebhookAdapter(options: LinearWebhookOptions) {
     authenticateRaw(req: IncomingMessage, body: Buffer): AgentEventSourceIdentity | undefined {
       let header: string | undefined;
       for (let i = 0; i < req.rawHeaders.length; i += 2)
-        if (req.rawHeaders[i].toLowerCase() === 'linear-signature') {
+        if (req.rawHeaders[i]!.toLowerCase() === 'linear-signature') {
           if (header !== undefined) return undefined;
-          header = req.rawHeaders[i + 1];
+          header = req.rawHeaders[i + 1]!;
         }
       if (!header || !/^[a-f0-9]{64}$/.test(header)) return undefined;
       const actual = Buffer.from(header, 'hex');

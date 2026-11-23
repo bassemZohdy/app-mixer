@@ -5,8 +5,8 @@ import { dataCopy } from './data-provider.js';
 function decimalMultiple(value: number, divisor: number): boolean {
   const parts = (number: number): [bigint, number] => {
     const [mantissa, exp = '0'] = number.toString().split('e'),
-      [whole, fraction = ''] = mantissa.split('.');
-    return [BigInt(whole + fraction), Number(exp) - fraction.length];
+      [whole, fraction = ''] = mantissa!.split('.');
+    return [BigInt(whole! + fraction), Number(exp) - fraction.length];
   };
   const [numerator, numeratorExponent] = parts(value),
     [denominator, denominatorExponent] = parts(divisor),
