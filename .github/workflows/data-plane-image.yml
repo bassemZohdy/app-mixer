@@ -1,0 +1,36 @@
+name: Data Plane image
+# FEAT-018: build the Data Plane image, scan it for known vulnerabilities and produce an SBOM.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 5 * * 1'
+permissions:
+  contents: read
+# A newer push to the same ref supersedes the running one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the Data Plane image
+        run: docker build -f Dockerfile.data-plane -t app-mixer-data-plane:scan .
+      - name: Install verified Trivy
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/trivy.tar.gz" https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-64bit.tar.gz
+          echo 'bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf  '"$RUNNER_TEMP/trivy.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
+      - name: Scan the image for vulnerabilities
+        run: "$RUNNER_TEMP/trivy" image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 app-mixer-data-plane:scan
+      - name: Produce an SBOM
+        run: "$RUNNER_TEMP/trivy" image --format cyclonedx --output "$RUNNER_TEMP/sbom.json" app-mixer-data-plane:scan
+      - name: Upload the SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: data-plane-sbom
+          path: ${{ runner.temp }}/sbom.json
+          if-no-files-found: error

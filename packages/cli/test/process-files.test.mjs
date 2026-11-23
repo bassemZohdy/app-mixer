@@ -248,6 +248,17 @@ test('TASK-002.6.7 CI caches the pinned Docker images the container tests start'
   assert.match(workflow, /docker save -o/);
 });
 
+// FEAT-018: the Data Plane image is built, scanned for vulnerabilities and inventoried as an SBOM on every push to main.
+test('FEAT-018 the Data Plane image workflow builds, scans and inventories the image with read-only permissions', () => {
+  const workflow = read('.github/workflows/data-plane-image.yml').replaceAll('\r\n', '\n');
+  assert.match(workflow, /^permissions:\s*\n  contents: read$/m, 'read-only permissions');
+  assert.match(workflow, /name: Build the Data Plane image\n\s+run: docker build -f Dockerfile\.data-plane -t \S+ \.\n/, 'a build step');
+  assert.match(workflow, /name: Install verified Trivy\n[\s\S]*?sha256sum -c -/, 'the scanner is verified by checksum');
+  assert.match(workflow, /name: Scan the image for vulnerabilities\n\s+run: \S*trivy"? image --scanners vuln[^\n]*--exit-code 1/, 'a scan step that fails on findings');
+  assert.match(workflow, /name: Produce an SBOM\n\s+run: \S*trivy"? image --format cyclonedx --output \S+sbom\.json/, 'an SBOM step');
+  assert.match(workflow, /name: Upload the SBOM\n\s+uses: actions\/upload-artifact@[a-f0-9]{40}[^\n]*\n\s+with:\n\s+name: data-plane-sbom/, 'the SBOM is published as an artifact');
+});
+
 test('TASK-002.7.2 the Data Plane image installs only its workspaces, has a healthcheck and CI bounds its size', () => {
   const dockerfile = read('Dockerfile.data-plane'),
     workflow = read('.github/workflows/kubernetes.yml');

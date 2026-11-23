@@ -2,8 +2,6 @@
 
 ## 🌳 Task Tree
 
-- [ ] **FEAT-018** · P2 · mid · Add a workflow that builds the Data Plane image, scans it for vulnerabilities and produces an SBOM; no workflow does this today
-  - Done when: a test parses the workflow and finds the build, scan and SBOM steps with read-only permissions; `node --test packages/cli/test/process-files.test.mjs`
 - [ ] **TASK-019** · P2 · mid · Make the Kubernetes base manifest secure by default (signed publication, JWT access, TLS, no test image tag) and move the open variant to a named example overlay
   - Done when: the rendered base contains no unsigned, public or http setting, and the open overlay is the only place they appear; `node --test packages/cli/test/kubernetes-base-defaults.test.mjs`
   - Links: Ref: docs/kubernetes-data-plane.md
