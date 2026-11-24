@@ -16,7 +16,7 @@ const result=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=r
 try{
  const manifest={manifestVersion:1,...scope,name:'Agent',owner:{kind:'organization',id:'org'},administrators:['admin'],servicePrincipalId:'service',model:{provider:'local',model:'model'},allowedCapabilities:[],lifecycle:{enabled:true,maxAttempts:2,runTimeoutMs:1000},quotas:{maxConcurrentRuns:1,maxTokensPerRun:100,maxRunsPerDay:10}};
  registerAgentManualStart(registry,{triggers,scope,sourceId:'manual',operationId:'manual-start',path:'/manual-start',maxPendingRuns:2,clock:()=>100,getDefinition:()=>({version:1,manifest}),authorize:()=>true});
- upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
+ upstream=createCapabilityServer({registry,authenticate:req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,auditFailure:()=>{}});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
  results=createServer(async(req,res)=>{const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));});results.listen(0,'127.0.0.1');await once(results,'listening');
  const target=await createProject('start-browser',dir);
  const fixture=`<!doctype html><body><main></main><script type="module">

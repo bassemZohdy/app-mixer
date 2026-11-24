@@ -131,7 +131,7 @@ try {
   assert.match(interactive.stdout, /<body data-result="pass">/);
   await verifyAccessibilityTree(url,join(dir,'chrome-accessibility'));
   const repo=new ApplicationStore({id:'demo',schemaVersion:1,revision:0,pages:[]});
-  review=createDevelopmentPlanes(repo,'developer-token-at-least-32-characters-long','agent-token-at-least-32-characters-long').control;
+  review=createDevelopmentPlanes({repository:repo,developerToken:'developer-token-at-least-32-characters-long',agentToken:'agent-token-at-least-32-characters-long'}).control;
   review.listen(0,'127.0.0.1'); await once(review,'listening');
   const reviewURL=`http://127.0.0.1:${review.address().port}/development`;
   const reviewPage=await exec(process.env.CHROME_BIN || 'google-chrome', [

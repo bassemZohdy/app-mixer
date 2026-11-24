@@ -25,9 +25,9 @@ jobs:
           echo 'bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf  '"$RUNNER_TEMP/trivy.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
       - name: Scan the image for vulnerabilities
-        run: "$RUNNER_TEMP/trivy" image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 app-mixer-data-plane:scan
+        run: $RUNNER_TEMP/trivy image --scanners vuln --ignore-unfixed --severity HIGH,CRITICAL --exit-code 1 app-mixer-data-plane:scan
       - name: Produce an SBOM
-        run: "$RUNNER_TEMP/trivy" image --format cyclonedx --output "$RUNNER_TEMP/sbom.json" app-mixer-data-plane:scan
+        run: $RUNNER_TEMP/trivy image --format cyclonedx --output "$RUNNER_TEMP/sbom.json" app-mixer-data-plane:scan
       - name: Upload the SBOM
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

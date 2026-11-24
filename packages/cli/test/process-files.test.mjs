@@ -61,6 +61,8 @@ test('workflows cancel superseded runs, bound every job and exercise the device 
       jobs = text.slice(text.indexOf('\njobs:')).match(/^  [a-z0-9-]+:\n/gm) ?? [];
     assert.ok(jobs.length > 0, name + ' has jobs');
     assert.equal((text.match(/^    timeout-minutes: \d+$/gm) ?? []).length, jobs.length, name + ': every job has timeout-minutes');
+    // A value that opens with a quote ends at the closing quote; text after it makes the whole file invalid YAML, and GitHub then rejects the workflow.
+    assert.doesNotMatch(text, /^\s+(?:- )?[A-Za-z-]+: "(?:[^"\\\n]|\\.)*"[ \t]+[^\s#]/m, name + ': a quoted value has nothing after its closing quote');
     if (name !== 'ci.yml') {
       assert.match(text, /^  push:\n    branches: \[main\]$/m, name + ' runs on pushes to main');
       assert.match(text, /^  schedule:\n    - cron: '[^']+'$/m, name + ' runs weekly');

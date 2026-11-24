@@ -7,6 +7,8 @@ RUN npm ci && npm run build && npm prune --omit=dev
 FROM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/shared/package.json ./packages/shared/package.json
+COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/packages/agent/package.json ./packages/agent/package.json
 COPY --from=build /app/packages/agent/dist ./packages/agent/dist
 COPY --from=build /app/packages/core/package.json ./packages/core/package.json

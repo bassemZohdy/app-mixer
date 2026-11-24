@@ -16,7 +16,7 @@ const result=new Promise((resolve,reject)=>{resolveResult=resolve;rejectResult=r
 try{
  const config={definitionVersion:1,maxAttempts:2,deadline:1000},other=runs.create(scope,'other',config,0);runs.request(scope,'other',other.revision,'pause',10,{principalId:'operator'});runs.create(scope,'run',config,0);runs.create({...scope,tenantId:'other'},'run',config,0);
  history=new SqliteAgentRunControlHistory(path,{scope,authorize:()=>true});registerAgentRunInspection(registry,{runs,scope,runId:'run',operationId:'inspect-run',path:'/inspect-run',authorize:()=>true});registerAgentRunControl(registry,{runs,scope,runId:'run',operationId:'control-run',path:'/control-run',clock:()=>100,authorize:()=>true});registerAgentRunControlHistory(registry,{history,scope,operationId:'control-history',path:'/control-history',limit:1,authorize:()=>true});
- upstream=createCapabilityServer(registry,req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,()=>{});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
+ upstream=createCapabilityServer({registry,authenticate:req=>req.headers.authorization===`Bearer ${token}`?actor:undefined,auditFailure:()=>{}});upstream.listen(0,'127.0.0.1');await once(upstream,'listening');
  results=createServer(async(req,res)=>{const parts=[];for await(const part of req)parts.push(part);res.writeHead(204);res.end();resolveResult(Buffer.concat(parts).toString('utf8'));});results.listen(0,'127.0.0.1');await once(results,'listening');
  const target=await createProject('control-browser',dir);
  const fixture=`<!doctype html><body><main></main><script type="module">

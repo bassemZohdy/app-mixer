@@ -66,9 +66,16 @@ let credentials, fixtureDirectory;
 async function prepareSignedFixture() {
   const { signPublicationRelease } = await import('../../../packages/core/dist/index.js');
   fixtureDirectory = mkdtempSync(join(tmpdir(), 'app-mixer-secure-node-'));
-  const source = resolve('deploy/kubernetes');
-  for (const folder of ['data-plane', 'signed-example', 'signed-jwt-example', 'signed-jwt-tls-example', 'strict-placement', 'zone-placement'])
+  const source = resolve('deploy/kubernetes'),
+    copied = new Set();
+  // Copy an overlay and, recursively, every '../' directory its kustomization.yaml references, so the chain still resolves next to the copy.
+  const copyWithReferences = folder => {
+    if (copied.has(folder)) return;
+    copied.add(folder);
     cpSync(join(source, folder), join(fixtureDirectory, folder), { recursive: true });
+    for (const [, reference] of readFileSync(join(source, folder, 'kustomization.yaml'), 'utf8').matchAll(/^[ \t]*-[ \t]+\.\.\/([\w-]+)[ \t]*$/gm)) copyWithReferences(reference);
+  };
+  for (const folder of ['signed-jwt-tls-example', 'strict-placement', 'zone-placement']) copyWithReferences(folder);
   const releaseKey = generateKeyPairSync('ed25519'),
     publication = JSON.parse(readFileSync(join(source, 'data-plane', 'publication.json'), 'utf8'));
   writeFileSync(join(fixtureDirectory, 'data-plane', 'publication.json'), JSON.stringify(signPublicationRelease(publication, 'production', 'test', releaseKey.privateKey)));
