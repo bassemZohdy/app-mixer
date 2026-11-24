@@ -1,0 +1,160 @@
+import { SqliteAgentTriggerRetention, type AgentTriggerRetentionActor, type TriggerRedactionCandidate } from './agent-trigger-retention.js';
+import { PostgresAgentTriggerRetentionFoundation } from '../postgres/postgres-trigger-retention-foundation.js';
+import { isIdentifier } from '../validation.js';
+
+type Options = {
+  retention: SqliteAgentTriggerRetention | PostgresAgentTriggerRetentionFoundation;
+  actor: AgentTriggerRetentionActor;
+  authorize: (actor: AgentTriggerRetentionActor, candidate: TriggerRedactionCandidate, signal: AbortSignal) => boolean | Promise<boolean>;
+  minAgeMs: number;
+  ageFrom?: 'receipt' | 'completion';
+  maxPerPass: number;
+  pollMs: number;
+  clock?: () => number;
+  onError: (error: unknown, runId?: string) => void | Promise<void>;
+};
+const id = isIdentifier;
+/** Opt-in host-driven redaction of terminal trigger payloads using recorded receipt times. */
+export class AgentTriggerRetentionWorker {
+  private readonly retention: SqliteAgentTriggerRetention | PostgresAgentTriggerRetentionFoundation;
+  private readonly actor: AgentTriggerRetentionActor;
+  private readonly authorize: Options['authorize'];
+  private readonly minAgeMs: number;
+  private readonly ageFrom: 'receipt' | 'completion';
+  private readonly maxPerPass: number;
+  private readonly pollMs: number;
+  private readonly clock: () => number;
+  private readonly onError: Options['onError'];
+  private cursor?: string;
+  private active = false;
+  private generation = 0;
+  private pending?: Promise<number>;
+  private timer?: ReturnType<typeof setTimeout>;
+  private controller?: AbortController;
+  constructor(options: Options) {
+    if (
+      !options ||
+      (!(options.retention instanceof SqliteAgentTriggerRetention) && !(options.retention instanceof PostgresAgentTriggerRetentionFoundation)) ||
+      !options.actor ||
+      !id(options.actor.tenantId) ||
+      !id(options.actor.principalId) ||
+      typeof options.authorize !== 'function' ||
+      !Number.isSafeInteger(options.minAgeMs) ||
+      options.minAgeMs < 1 ||
+      (options.ageFrom !== undefined && !['receipt', 'completion'].includes(options.ageFrom)) ||
+      !Number.isSafeInteger(options.maxPerPass) ||
+      options.maxPerPass < 1 ||
+      options.maxPerPass > 100 ||
+      !Number.isSafeInteger(options.pollMs) ||
+      options.pollMs < 100 ||
+      options.pollMs > 3600000 ||
+      (options.clock !== undefined && typeof options.clock !== 'function') ||
+      typeof options.onError !== 'function'
+    )
+      throw Error('Invalid trigger retention worker');
+    this.retention = options.retention;
+    this.actor = { tenantId: options.actor.tenantId, principalId: options.actor.principalId };
+    this.authorize = options.authorize;
+    this.minAgeMs = options.minAgeMs;
+    this.ageFrom = options.ageFrom ?? 'receipt';
+    this.maxPerPass = options.maxPerPass;
+    this.pollMs = options.pollMs;
+    this.clock = options.clock ?? Date.now;
+    this.onError = options.onError;
+  }
+  private now(): number {
+    const now = this.clock();
+    if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid clock');
+    return now;
+  }
+  private report(error: unknown, runId?: string): void {
+    try {
+      const result = this.onError(error, runId);
+      if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
+    } catch {}
+  }
+  private async pass(signal: AbortSignal): Promise<number> {
+    const cutoff = (this.retention instanceof PostgresAgentTriggerRetentionFoundation ? await this.retention.databaseTime() : this.now()) - this.minAgeMs;
+    if (cutoff <= 0 || signal.aborted) return 0;
+    let page: Awaited<ReturnType<SqliteAgentTriggerRetention['listCandidates']>>;
+    try {
+      page = await this.retention.listCandidates(
+        { ...this.actor },
+        { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass, ...(this.ageFrom === 'completion' ? { completedBefore: cutoff } : { receivedBefore: cutoff }) },
+        signal
+      );
+    } catch (error) {
+      if (signal.aborted) return 0;
+      throw error;
+    }
+    if (signal.aborted) return 0;
+    let count = 0;
+    for (const candidate of page.items) {
+      if (signal.aborted) break;
+      try {
+        if ((await this.authorize({ ...this.actor }, { ...candidate }, signal)) === true && !signal.aborted) {
+          const now = this.retention instanceof PostgresAgentTriggerRetentionFoundation ? await this.retention.databaseTime() : this.now();
+          if (signal.aborted) break;
+          const timestamp = this.ageFrom === 'completion' ? candidate.completedAt : candidate.receivedAt;
+          if (
+            timestamp !== undefined &&
+            timestamp < now - this.minAgeMs &&
+            (await this.retention.redact({ ...this.actor }, candidate.runId, now, signal, { minAgeMs: this.minAgeMs, clock: this.clock, basis: this.ageFrom }))
+          )
+            count++;
+        }
+      } catch (error) {
+        if (!signal.aborted) this.report(error, candidate.runId);
+      }
+    }
+    if (!signal.aborted)
+      if (page.nextAfter === undefined) delete this.cursor;
+      else this.cursor = page.nextAfter;
+    return count;
+  }
+  private begin(): Promise<number> {
+    const controller = new AbortController();
+    this.controller = controller;
+    const pending = this.pass(controller.signal);
+    this.pending = pending;
+    void pending
+      .finally(() => {
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
+      })
+      .catch(() => {});
+    return pending;
+  }
+  runOnce(): Promise<number> {
+    if (this.active || this.pending) throw Error('Trigger retention worker already running');
+    return this.begin();
+  }
+  start(): void {
+    if (this.active || this.pending) throw Error('Trigger retention worker already running');
+    this.active = true;
+    const generation = ++this.generation,
+      loop = () => {
+        if (!this.active || this.generation !== generation) return;
+        const pending = this.begin();
+        void pending
+          .catch(error => this.report(error))
+          .finally(() => {
+            if (this.active && this.generation === generation) this.timer = setTimeout(loop, this.pollMs);
+          });
+      };
+    loop();
+  }
+  async stop(): Promise<void> {
+    this.active = false;
+    this.generation++;
+    if (this.timer) clearTimeout(this.timer);
+    delete this.timer;
+    this.controller?.abort();
+    const pending = this.pending;
+    if (pending)
+      try {
+        await pending;
+      } catch {}
+  }
+}
+export type { Options as AgentTriggerRetentionWorkerOptions };

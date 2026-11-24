@@ -5,7 +5,7 @@ import { type BaseCheckpointSaver } from '@langchain/langgraph-checkpoint';
 import type { ChatMessage, OpenAIModelConfig, StreamingModel } from './index.js';
 import type { createCapabilityTool } from './capability-tool.js';
 import { convertToOpenAITool } from '@langchain/core/utils/function_calling';
-import { markNoEffect } from './action-journal.js';
+import { markNoEffect } from './runs/action-journal.js';
 
 type CapabilityTool = ReturnType<typeof createCapabilityTool>;
 export interface ToolModel {

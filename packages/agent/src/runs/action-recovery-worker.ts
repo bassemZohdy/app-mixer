@@ -1,0 +1,226 @@
+import type { AgentRunScope } from './durable-runs.js';
+import { SqliteAgentActionJournal, type AgentAction, type ActionVerification, type ActionVerificationRequest, type ActionReconciliationEvidence } from './action-journal.js';
+import { PostgresAgentActionJournalFoundation } from '../postgres/postgres-action-journal-foundation.js';
+
+export type AgentActionRecoveryObservation = { outcome: 'completed' | 'failed' | 'stopped'; reconciled: number; durationMs: number; denied?: number; unknown?: number; errors?: number };
+type Options = {
+  journal: SqliteAgentActionJournal | PostgresAgentActionJournalFoundation;
+  authorize: (action: AgentAction, signal: AbortSignal) => boolean | Promise<boolean>;
+  evidence: (action: AgentAction, signal: AbortSignal) => ActionReconciliationEvidence | Promise<ActionReconciliationEvidence>;
+  verify: (request: ActionVerificationRequest, signal: AbortSignal) => Promise<ActionVerification>;
+  maxPerPass: number;
+  pollMs: number;
+  callbackTimeoutMs?: number;
+  maxPendingCallbacks?: number;
+  observe?: (observation: AgentActionRecoveryObservation) => void | Promise<void>;
+  onError: (error: unknown, actionId?: string) => void | Promise<void>;
+};
+class RecoveryStopped extends Error {}
+class RecoveryDenied extends Error {}
+type PassCounts = { denied: number; unknown: number; errors: number };
+/** Explicit, evidence-bearing recovery polling for one uncertain run. */
+export class AgentActionRecoveryWorker {
+  private readonly journal: SqliteAgentActionJournal | PostgresAgentActionJournalFoundation;
+  private readonly authorize: Options['authorize'];
+  private readonly evidence: Options['evidence'];
+  private readonly verify: Options['verify'];
+  private readonly maxPerPass: number;
+  private readonly pollMs: number;
+  private readonly callbackTimeoutMs: number | undefined;
+  private readonly maxPendingCallbacks: number | undefined;
+  private callbacksInFlight = 0;
+  private readonly observe: Options['observe'];
+  private readonly onError: Options['onError'];
+  private active = false;
+  private generation = 0;
+  private pending?: Promise<number>;
+  private timer?: ReturnType<typeof setTimeout>;
+  private cursor?: string;
+  private controller?: AbortController;
+  constructor(options: Options) {
+    if (
+      !options ||
+      (!(options.journal instanceof SqliteAgentActionJournal) && !(options.journal instanceof PostgresAgentActionJournalFoundation)) ||
+      typeof options.authorize !== 'function' ||
+      typeof options.evidence !== 'function' ||
+      typeof options.verify !== 'function' ||
+      !Number.isSafeInteger(options.maxPerPass) ||
+      options.maxPerPass < 1 ||
+      options.maxPerPass > 100 ||
+      !Number.isSafeInteger(options.pollMs) ||
+      options.pollMs < 100 ||
+      options.pollMs > 3600000 ||
+      typeof options.onError !== 'function' ||
+      (options.observe !== undefined && typeof options.observe !== 'function')
+    )
+      throw Error('Invalid action recovery worker');
+    if (
+      (options.callbackTimeoutMs === undefined) !== (options.maxPendingCallbacks === undefined) ||
+      (options.callbackTimeoutMs !== undefined && (!Number.isInteger(options.callbackTimeoutMs) || options.callbackTimeoutMs < 100 || options.callbackTimeoutMs > 30000)) ||
+      (options.maxPendingCallbacks !== undefined && (!Number.isInteger(options.maxPendingCallbacks) || options.maxPendingCallbacks < 1 || options.maxPendingCallbacks > 100))
+    )
+      throw Error('Invalid action recovery worker');
+    this.observe = options.observe;
+    this.callbackTimeoutMs = options.callbackTimeoutMs;
+    this.maxPendingCallbacks = options.maxPendingCallbacks;
+    this.journal = options.journal;
+    this.authorize = options.authorize;
+    this.evidence = options.evidence;
+    this.verify = options.verify;
+    this.maxPerPass = options.maxPerPass;
+    this.pollMs = options.pollMs;
+    this.onError = options.onError;
+  }
+  isBoundTo(scope: AgentRunScope, runId: string): boolean {
+    return this.journal.isBoundTo(scope, runId);
+  }
+  private report(error: unknown, actionId?: string): void {
+    try {
+      const result = this.onError(error, actionId);
+      if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
+    } catch {}
+  }
+  private async callback<T>(fn: (signal: AbortSignal) => T | Promise<T>, parent: AbortSignal): Promise<T> {
+    if (this.callbackTimeoutMs === undefined) return await fn(parent);
+    if (parent.aborted || this.callbacksInFlight >= this.maxPendingCallbacks!) throw Error('Action recovery callback unavailable');
+    const controller = new AbortController(),
+      signal = AbortSignal.any([parent, controller.signal]);
+    this.callbacksInFlight++;
+    const task = Promise.resolve().then(() => {
+      if (signal.aborted) throw Error('Action recovery callback unavailable');
+      return fn(signal);
+    });
+    void task.then(
+      () => {
+        this.callbacksInFlight--;
+      },
+      () => {
+        this.callbacksInFlight--;
+      }
+    );
+    let abort = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(Error('Action recovery callback unavailable'));
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    });
+    const timer = setTimeout(() => controller.abort(), this.callbackTimeoutMs);
+    try {
+      const result = await Promise.race([task, cancelled]);
+      if (signal.aborted) throw Error('Action recovery callback unavailable');
+      return result;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+    }
+  }
+  private async pass(keepGoing: () => boolean, signal: AbortSignal, counts: PassCounts): Promise<number> {
+    const page = await this.journal.list({ status: 'uncertain', ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxPerPass });
+    let settled = 0;
+    for (const action of page.actions) {
+      if (!keepGoing()) return settled;
+      try {
+        const allowed = await this.callback(callbackSignal => this.authorize(structuredClone(action), callbackSignal), signal);
+        if (!keepGoing()) continue;
+        if (allowed !== true) {
+          counts.denied++;
+          continue;
+        }
+        const proof = await this.callback(callbackSignal => this.evidence(structuredClone(action), callbackSignal), signal);
+        if (!keepGoing()) continue;
+        if (proof === undefined) throw Error('Action recovery evidence required');
+        const verify = async (request: ActionVerificationRequest) => {
+          if (
+            request.action.operationId !== action.operationId ||
+            request.action.idempotencyKey !== action.idempotencyKey ||
+            request.action.attempts !== action.attempts ||
+            request.action.maxAttempts !== action.maxAttempts ||
+            request.action.status !== action.status
+          )
+            throw Error('Action recovery stale');
+          const decision = structuredClone(await this.callback(callbackSignal => this.verify(request, callbackSignal), signal));
+          if (!keepGoing()) throw new RecoveryStopped();
+          if ((await this.callback(callbackSignal => this.authorize(structuredClone(action), callbackSignal), signal)) !== true) {
+            if (keepGoing()) counts.denied++;
+            throw new RecoveryDenied('Action recovery forbidden');
+          }
+          if (!keepGoing()) throw new RecoveryStopped();
+          return decision;
+        };
+        const result =
+          this.journal instanceof PostgresAgentActionJournalFoundation
+            ? await this.journal.reconcileWith(action.actionId, verify, proof, signal)
+            : await this.journal.reconcileWith(action.actionId, verify, proof);
+        if (result !== 'unknown') settled++;
+        else counts.unknown++;
+      } catch (error) {
+        if (keepGoing() && !(error instanceof RecoveryStopped)) {
+          if (!(error instanceof RecoveryDenied)) counts.errors++;
+          this.report(error, action.actionId);
+        }
+      } finally {
+        if (keepGoing()) this.cursor = action.actionId;
+      }
+    }
+    if (keepGoing() && !page.next) delete this.cursor;
+    return settled;
+  }
+  private begin(keepGoing: () => boolean): Promise<number> {
+    const controller = new AbortController();
+    this.controller = controller;
+    const counts: PassCounts = { denied: 0, unknown: 0, errors: 0 },
+      started = performance.now(),
+      pending = this.pass(() => !controller.signal.aborted && keepGoing(), controller.signal, counts);
+    this.pending = pending;
+    const observe = (outcome: AgentActionRecoveryObservation['outcome'], reconciled: number) => {
+      try {
+        const result = this.observe?.({ outcome, reconciled, ...counts, durationMs: Math.max(0, performance.now() - started) });
+        if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
+      } catch {}
+    };
+    void pending.then(
+      count => observe(controller.signal.aborted ? 'stopped' : 'completed', count),
+      () => observe(controller.signal.aborted ? 'stopped' : 'failed', 0)
+    );
+    void pending
+      .finally(() => {
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
+      })
+      .catch(() => {});
+    return pending;
+  }
+  runOnce(): Promise<number> {
+    if (this.active || this.pending) throw Error('Action recovery worker already running');
+    const generation = this.generation;
+    return this.begin(() => this.generation === generation);
+  }
+  start(): void {
+    if (this.active || this.pending) throw Error('Action recovery worker already running');
+    this.active = true;
+    const generation = ++this.generation,
+      loop = () => {
+        if (!this.active || this.generation !== generation) return;
+        const pending = this.begin(() => this.active && this.generation === generation);
+        void pending
+          .catch(error => this.report(error))
+          .finally(() => {
+            if (this.active && this.generation === generation) this.timer = setTimeout(loop, this.pollMs);
+          });
+      };
+    loop();
+  }
+  async stop(): Promise<void> {
+    this.active = false;
+    this.generation++;
+    if (this.timer) clearTimeout(this.timer);
+    delete this.timer;
+    this.controller?.abort();
+    const pending = this.pending;
+    if (pending)
+      try {
+        await pending;
+      } catch {}
+  }
+}
+export type { Options as AgentActionRecoveryWorkerOptions };

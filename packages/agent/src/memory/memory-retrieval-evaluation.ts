@@ -1,0 +1,140 @@
+import { AgentSemanticMemory, validSimilarity } from './semantic-memory.js';
+import type { AgentMemoryActor, AgentMemoryScope } from './agent-memory.js';
+import { isIdentifier } from '../validation.js';
+
+export type MemoryEvaluationCase = { id: string; query: string; relevantIds: string[] };
+export type MemoryEvaluationResult = {
+  id: string;
+  retrievedIds: string[];
+  recall: number;
+  precision: number;
+  reciprocalRank: number;
+  averagePrecision: number;
+  ndcg: number;
+  exactIds?: string[];
+  exactRecall?: number | null;
+};
+export type MemoryEvaluationReport = {
+  mode: 'semantic' | 'hybrid' | 'indexed' | 'lexical';
+  limit: number;
+  minSimilarity?: number;
+  maxCandidates?: number;
+  cases: MemoryEvaluationResult[];
+  meanRecall: number;
+  meanPrecision: number;
+  meanReciprocalRank: number;
+  meanAveragePrecision: number;
+  meanNdcg: number;
+  meanExactRecall?: number | null;
+};
+const id = isIdentifier;
+
+/** Evaluate a host-labeled set sequentially using the same scoped and authorized search as production. */
+export async function evaluateAgentMemoryRetrieval(options: {
+  memory: AgentSemanticMemory;
+  actor: AgentMemoryActor;
+  scope: AgentMemoryScope;
+  mode: 'semantic' | 'hybrid' | 'indexed' | 'lexical';
+  limit: number;
+  minSimilarity?: number;
+  maxCandidates?: number;
+  compareExact?: boolean;
+  cases: MemoryEvaluationCase[];
+}): Promise<MemoryEvaluationReport> {
+  if (
+    !options ||
+    !(options.memory instanceof AgentSemanticMemory) ||
+    !['semantic', 'hybrid', 'indexed', 'lexical'].includes(options.mode) ||
+    !Number.isSafeInteger(options.limit) ||
+    options.limit < 1 ||
+    options.limit > 20 ||
+    (options.minSimilarity !== undefined && (!validSimilarity(options.minSimilarity) || options.mode === 'lexical')) ||
+    (options.maxCandidates !== undefined &&
+      (!['indexed', 'lexical'].includes(options.mode) || !Number.isSafeInteger(options.maxCandidates) || options.maxCandidates < options.limit || options.maxCandidates > 1000)) ||
+    (options.compareExact !== undefined && (typeof options.compareExact !== 'boolean' || (options.compareExact && options.mode !== 'indexed'))) ||
+    !Array.isArray(options.cases) ||
+    options.cases.length < 1 ||
+    options.cases.length > 100
+  )
+    throw Error('Invalid memory evaluation');
+  const { memory, mode, limit, minSimilarity, compareExact } = options,
+    maxCandidates = options.maxCandidates ?? 100,
+    actor = structuredClone(options.actor),
+    scope = structuredClone(options.scope),
+    cases = structuredClone(options.cases),
+    seen = new Set<string>();
+  for (const item of cases) {
+    if (
+      !item ||
+      !id(item.id) ||
+      seen.has(item.id) ||
+      typeof item.query !== 'string' ||
+      !item.query.trim() ||
+      item.query.length > 2000 ||
+      !Array.isArray(item.relevantIds) ||
+      item.relevantIds.length < 1 ||
+      item.relevantIds.length > 100 ||
+      item.relevantIds.some(value => !id(value)) ||
+      new Set(item.relevantIds).size !== item.relevantIds.length
+    )
+      throw Error('Invalid memory evaluation');
+    seen.add(item.id);
+  }
+  const results: MemoryEvaluationResult[] = [];
+  for (const item of cases) {
+    const comparison = compareExact ? await memory.compareIndexed(actor, scope, item.query, limit, maxCandidates, { minSimilarity }) : undefined,
+      hits = comparison
+        ? comparison.indexed
+        : mode === 'indexed'
+          ? await memory.searchIndexed(actor, scope, item.query, limit, maxCandidates, { minSimilarity })
+          : mode === 'lexical'
+            ? await memory.searchLexical(actor, scope, item.query, limit, maxCandidates)
+            : mode === 'hybrid'
+              ? await memory.searchHybrid(actor, scope, item.query, limit, { minSimilarity })
+              : await memory.search(actor, scope, item.query, limit, { minSimilarity }),
+      relevant = new Set(item.relevantIds),
+      retrievedIds = hits.map(hit => hit.id),
+      matches = retrievedIds.filter(value => relevant.has(value)),
+      first = retrievedIds.findIndex(value => relevant.has(value)),
+      gain = (count: number) => {
+        let total = 0;
+        for (let i = 0; i < count; i++) total += 1 / Math.log2(i + 2);
+        return total;
+      },
+      ideal = gain(Math.min(relevant.size, limit)),
+      ndcg = ideal === 0 ? 0 : retrievedIds.reduce((sum, value, i) => sum + (relevant.has(value) ? 1 / Math.log2(i + 2) : 0), 0) / ideal;
+    let found = 0,
+      precisionSum = 0;
+    for (const [index, value] of retrievedIds.entries())
+      if (relevant.has(value)) {
+        found++;
+        precisionSum += found / (index + 1);
+      }
+    const exactIds = comparison?.exact.map(hit => hit.id);
+    results.push({
+      id: item.id,
+      retrievedIds,
+      recall: matches.length / relevant.size,
+      precision: matches.length / limit,
+      reciprocalRank: first < 0 ? 0 : 1 / (first + 1),
+      averagePrecision: precisionSum / relevant.size,
+      ndcg,
+      ...(exactIds === undefined ? {} : { exactIds, exactRecall: exactIds.length ? exactIds.filter(value => retrievedIds.includes(value)).length / exactIds.length : null })
+    });
+  }
+  const mean = (key: 'recall' | 'precision' | 'reciprocalRank' | 'averagePrecision' | 'ndcg') => results.reduce((sum, result) => sum + result[key], 0) / results.length;
+  const comparisons = results.map(result => result.exactRecall).filter((value): value is number => typeof value === 'number');
+  return {
+    mode,
+    limit,
+    ...(minSimilarity === undefined ? {} : { minSimilarity }),
+    ...(['indexed', 'lexical'].includes(mode) ? { maxCandidates } : {}),
+    cases: results,
+    meanRecall: mean('recall'),
+    meanPrecision: mean('precision'),
+    meanReciprocalRank: mean('reciprocalRank'),
+    meanAveragePrecision: mean('averagePrecision'),
+    meanNdcg: mean('ndcg'),
+    ...(compareExact ? { meanExactRecall: comparisons.length ? comparisons.reduce((sum, value) => sum + value, 0) / comparisons.length : null } : {})
+  };
+}

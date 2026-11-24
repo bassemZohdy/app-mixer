@@ -12,11 +12,11 @@ import {
   registerBudgetRecoveryDiscovery
 } from '../dist/index.js';
 import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
-import { PostgresAgentTriggerFoundation } from '../dist/postgres-trigger-foundation.js';
-import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres-run-lifecycle-foundation.js';
-import { PostgresAgentActionJournalFoundation } from '../dist/postgres-action-journal-foundation.js';
-import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres-token-budget-foundation.js';
-import { PostgresAgentActionRecoveryDiscoveryFoundation, PostgresAgentBudgetRecoveryDiscoveryFoundation } from '../dist/postgres-recovery-discovery-foundation.js';
+import { PostgresAgentTriggerFoundation } from '../dist/postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentActionJournalFoundation } from '../dist/postgres/postgres-action-journal-foundation.js';
+import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres/postgres-token-budget-foundation.js';
+import { PostgresAgentActionRecoveryDiscoveryFoundation, PostgresAgentBudgetRecoveryDiscoveryFoundation } from '../dist/postgres/postgres-recovery-discovery-foundation.js';
 const transaction = pool => async operation => {
   const client = await pool.connect();
   try {

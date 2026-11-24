@@ -1,0 +1,90 @@
+import { PostgresAgentDefinitions } from '../postgres/postgres-agent-definitions.js';
+import type { AgentRunScope } from '../runs/durable-runs.js';
+import { capabilityWiring, type CapabilityActor, type CapabilityRegistry } from './capability-wiring.js';
+type Actor = CapabilityActor;
+type Snapshot = { version: number; enabled: boolean };
+type Registry = CapabilityRegistry;
+type Options = {
+  definitions: PostgresAgentDefinitions;
+  scope: AgentRunScope;
+  operationId: string;
+  path: string;
+  authorize: (actor: Actor, action: 'access' | 'enable' | 'suspend', definition: Snapshot | null, signal: AbortSignal) => boolean | Promise<boolean>;
+  timeoutMs?: number;
+  maxPending?: number;
+};
+function parse(input: unknown): { version: number; enabled: boolean } | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 2 || !Object.hasOwn(input, 'version') || !Object.hasOwn(input, 'enabled')) return;
+  const value = input as { version: unknown; enabled: unknown };
+  if (!Number.isSafeInteger(value.version) || Number(value.version) < 1 || Number(value.version) >= Number.MAX_SAFE_INTEGER || typeof value.enabled !== 'boolean') return;
+  return { version: value.version as number, enabled: value.enabled };
+}
+/** Modify only enabled state on one shared definition, using its versioned audit transaction. */
+export function registerAgentDefinitionControl(registry: Registry, options: Options): void {
+  if (!registry || typeof registry.register !== 'function' || !options || !(options.definitions instanceof PostgresAgentDefinitions)) throw Error('Invalid definition control capability');
+  const { definitions, operationId, path, authorize, timeoutMs, maxPending } = options,
+    { scope } = capabilityWiring('definition control', 'Definition control unavailable', registry, options);
+  let pending = 0;
+  const permit = async (actor: Actor, action: 'access' | 'enable' | 'suspend', definition: Snapshot | null): Promise<boolean> => {
+    const controller = new AbortController(),
+      invoke = () => authorize({ ...actor }, action, definition ? { ...definition } : null, controller.signal);
+    if (timeoutMs === undefined) return (await invoke()) === true;
+    if (pending >= maxPending!) throw Error('Definition control unavailable');
+    pending++;
+    const task = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw Error('Definition control unavailable');
+      return invoke();
+    });
+    void task.then(
+      () => {
+        pending--;
+      },
+      () => {
+        pending--;
+      }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        task,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(Error('Definition control unavailable'));
+          }, timeoutMs);
+        })
+      ]);
+      if (controller.signal.aborted) throw Error('Definition control unavailable');
+      return result === true;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+  registry.register(
+    { operationId, method: 'POST', path, summary: 'Enable or suspend one agent' },
+    {
+      authorize: actor => actor.tenantId === scope.tenantId && permit({ tenantId: actor.tenantId, principalId: actor.principalId }, 'access', null),
+      validate: input => !!parse(input),
+      execute: async (input, actor) => {
+        const safe = parse(input);
+        if (!safe) throw Error('Invalid capability input');
+        const who = { tenantId: actor.tenantId, principalId: actor.principalId };
+        try {
+          const current = await definitions.get(who, scope.agentId);
+          if (!current || current.version !== safe.version || current.manifest.lifecycle.enabled === safe.enabled) throw Error('Definition control conflict');
+          const state = { version: current.version, enabled: current.manifest.lifecycle.enabled },
+            action = safe.enabled ? 'enable' : 'suspend';
+          if (!(await permit(who, 'access', null)) || !(await permit(who, action, state))) throw Error('Capability forbidden');
+          const updated = await definitions.save(who, { ...current.manifest, lifecycle: { ...current.manifest.lifecycle, enabled: safe.enabled } }, safe.version, { action });
+          return { agentId: scope.agentId, version: updated.version, enabled: updated.manifest.lifecycle.enabled };
+        } catch (error) {
+          if (error instanceof Error && error.message === 'Agent definition access denied') throw Error('Capability forbidden');
+          if (error instanceof Error && ['Agent version conflict', 'Agent control conflict', 'Agent definition changed during read'].includes(error.message))
+            throw Error('Definition control conflict');
+          throw error;
+        }
+      }
+    }
+  );
+}
+export type { Options as AgentDefinitionControlCapabilityOptions };

@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { PostgresAgentRunLifecycleFoundation } from '../../dist/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../../dist/postgres/postgres-run-lifecycle-foundation.js';
 const pool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL, options: `-c search_path=${process.env.TEST_SCHEMA}` }),
   phase = process.env.TEST_PHASE;
 const hold = () => new Promise(() => {});

@@ -1,0 +1,167 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { SqliteAgentRuns, type AgentRunScope, type ExpiredAgentLease } from '../runs/durable-runs.js';
+import { PostgresAgentRunLifecycleFoundation } from '../postgres/postgres-run-lifecycle-foundation.js';
+import { isIdentifier, isNonNegativeInteger } from '../validation.js';
+import { capabilityWiring, type CapabilityActor, type CapabilityRegistry } from './capability-wiring.js';
+type Actor = CapabilityActor;
+type Cursor = { leaseUntil: number; runId: string };
+type Registry = CapabilityRegistry;
+type Options = {
+  runs: SqliteAgentRuns | PostgresAgentRunLifecycleFoundation;
+  scope: AgentRunScope;
+  operationId: string;
+  path: string;
+  limit: number;
+  cursorKey: Uint8Array;
+  authorize: (actor: Actor, action: 'list' | 'read', lease: ExpiredAgentLease | null, signal: AbortSignal) => boolean | Promise<boolean>;
+  clock?: () => number;
+  timeoutMs?: number;
+  maxPending?: number;
+};
+const id = isIdentifier;
+const number = isNonNegativeInteger;
+const size = 512;
+function parse(input: unknown): { cursor?: string } | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 1 || !Object.hasOwn(input, 'query')) return;
+  const query = (input as { query?: unknown }).query;
+  if (!query || typeof query !== 'object' || Array.isArray(query) || Object.keys(query).some(key => key !== 'cursor')) return;
+  const cursor = (query as { cursor?: unknown }).cursor;
+  if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 1000)) return;
+  return cursor === undefined ? {} : { cursor };
+}
+const aad = (scope: AgentRunScope, actor: Actor, operationId: string) =>
+  createHash('sha256')
+    .update(JSON.stringify([scope.tenantId, scope.agentId, actor.principalId, operationId]))
+    .digest();
+function seal(key: Buffer, scope: AgentRunScope, actor: Actor, operationId: string, cursor: Cursor): string {
+  const content = Buffer.from(JSON.stringify({ version: 1, ...cursor }));
+  if (content.length > size - 2) throw Error('Invalid lease discovery cursor');
+  const plain = Buffer.alloc(size);
+  plain.writeUInt16BE(content.length);
+  content.copy(plain, 2);
+  const iv = randomBytes(12),
+    cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(aad(scope, actor, operationId));
+  return Buffer.concat([iv, cipher.update(plain), cipher.final(), cipher.getAuthTag()]).toString('base64url');
+}
+function unseal(key: Buffer, scope: AgentRunScope, actor: Actor, operationId: string, cursor: string): Cursor {
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(cursor)) throw Error();
+    const bytes = Buffer.from(cursor, 'base64url');
+    if (bytes.length !== size + 28 || bytes.toString('base64url') !== cursor) throw Error();
+    const cipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+    cipher.setAAD(aad(scope, actor, operationId));
+    cipher.setAuthTag(bytes.subarray(-16));
+    const plain = Buffer.concat([cipher.update(bytes.subarray(12, -16)), cipher.final()]),
+      length = plain.readUInt16BE();
+    if (length < 1 || length > size - 2) throw Error();
+    const value: unknown = JSON.parse(plain.subarray(2, 2 + length).toString('utf8'));
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value).length !== 3 ||
+      (value as { version?: unknown }).version !== 1 ||
+      !number((value as { leaseUntil?: unknown }).leaseUntil) ||
+      !id((value as { runId?: unknown }).runId)
+    )
+      throw Error();
+    return { leaseUntil: (value as Cursor).leaseUntil, runId: (value as Cursor).runId };
+  } catch {
+    throw Error('Invalid capability input');
+  }
+}
+/** Scoped, authorized expired-lease discovery with opaque actor-bound cursors. */
+export function registerAgentExpiredLeaseDiscovery(registry: Registry, options: Options): void {
+  if (
+    !registry ||
+    typeof registry.register !== 'function' ||
+    !options ||
+    (!(options.runs instanceof SqliteAgentRuns) && !(options.runs instanceof PostgresAgentRunLifecycleFoundation)) ||
+    !number(options.limit) ||
+    options.limit < 1 ||
+    options.limit > 100 ||
+    !(options.cursorKey instanceof Uint8Array) ||
+    options.cursorKey.byteLength !== 32 ||
+    (options.clock !== undefined && typeof options.clock !== 'function')
+  )
+    throw Error('Invalid expired lease discovery capability');
+  const { runs, operationId, path, limit, authorize, timeoutMs, maxPending } = options,
+    { scope } = capabilityWiring('expired lease discovery', 'Lease discovery unavailable', registry, options),
+    key = Buffer.from(options.cursorKey),
+    clock = options.clock ?? Date.now;
+  let pending = 0;
+  const permit = async (actor: Actor, action: 'list' | 'read', lease: ExpiredAgentLease | null): Promise<boolean> => {
+    const controller = new AbortController(),
+      invoke = () => authorize({ ...actor }, action, lease ? { ...lease } : null, controller.signal);
+    if (timeoutMs === undefined) return (await invoke()) === true;
+    if (pending >= maxPending!) throw Error('Lease discovery unavailable');
+    pending++;
+    const task = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw Error('Lease discovery unavailable');
+      return invoke();
+    });
+    void task.then(
+      () => {
+        pending--;
+      },
+      () => {
+        pending--;
+      }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        task,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(Error('Lease discovery unavailable'));
+          }, timeoutMs);
+        })
+      ]);
+      if (controller.signal.aborted) throw Error('Lease discovery unavailable');
+      return result === true;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+  registry.register(
+    { operationId, method: 'GET', path, summary: 'Discover expired agent leases' },
+    {
+      authorize: async actor => actor.tenantId === scope.tenantId && (await permit({ tenantId: actor.tenantId, principalId: actor.principalId }, 'list', null)),
+      validate: input => !!parse(input),
+      execute: async (input, actor) => {
+        const query = parse(input);
+        if (!query) throw Error('Invalid capability input');
+        const who = { tenantId: actor.tenantId, principalId: actor.principalId },
+          after = query.cursor === undefined ? undefined : unseal(key, scope, who, operationId, query.cursor);
+        let page: { items: ExpiredAgentLease[]; next?: Cursor };
+        if (runs instanceof PostgresAgentRunLifecycleFoundation) page = await runs.expiredLeasePage(scope, { ...(after !== undefined ? { after } : {}), limit });
+        else {
+          const now = clock();
+          if (!number(now)) throw Error('Lease discovery unavailable');
+          page = runs.expiredLeasePage(scope, now, { ...(after !== undefined ? { after } : {}), limit });
+        }
+        const items: ExpiredAgentLease[] = [];
+        for (const lease of page.items) if (await permit(who, 'read', lease)) items.push({ ...lease });
+        for (const lease of items) if (!(await permit(who, 'read', lease))) throw Error('Capability forbidden');
+        if (!(await permit(who, 'list', null))) throw Error('Capability forbidden');
+        for (const lease of items) {
+          if (runs instanceof PostgresAgentRunLifecycleFoundation) {
+            const current = await runs.getExpiredLease(scope, lease.runId);
+            if (!current || current.revision !== lease.revision || current.status !== lease.status || current.leaseUntil !== lease.leaseUntil) throw Error('Lease discovery changed');
+          } else {
+            const finalNow = clock();
+            if (!number(finalNow)) throw Error('Lease discovery unavailable');
+            const current = runs.get(scope, lease.runId);
+            if (!current || current.archived || current.revision !== lease.revision || current.status !== lease.status || current.leaseUntil !== lease.leaseUntil || current.leaseUntil > finalNow)
+              throw Error('Lease discovery changed');
+          }
+        }
+        return { items, ...(page.next ? { nextCursor: seal(key, scope, who, operationId, page.next) } : {}) };
+      }
+    }
+  );
+}
+export type { Options as AgentExpiredLeaseDiscoveryOptions };

@@ -4,10 +4,10 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { CapabilityRegistry, createCapabilityServer } from '../../core/dist/index.js';
 import { PostgresAgentSharedCost, AgentBudgetRecovery, registerBudgetRecovery, registerBudgetRecoveryPending, registerBudgetRecoveryHistory } from '../dist/index.js';
-import { PostgresAgentTriggerFoundation } from '../dist/postgres-trigger-foundation.js';
-import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres-run-lifecycle-foundation.js';
-import { PostgresAgentActionJournalFoundation } from '../dist/postgres-action-journal-foundation.js';
-import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres-token-budget-foundation.js';
+import { PostgresAgentTriggerFoundation } from '../dist/postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentActionJournalFoundation } from '../dist/postgres/postgres-action-journal-foundation.js';
+import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres/postgres-token-budget-foundation.js';
 const transaction = pool => async operation => {
   const client = await pool.connect();
   try {

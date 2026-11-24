@@ -4,8 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { PostgresAgentTriggerFoundation } from '../dist/postgres-trigger-foundation.js';
-import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentTriggerFoundation } from '../dist/postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres/postgres-run-lifecycle-foundation.js';
 const transaction = pool => async operation => {
   const client = await pool.connect();
   try {

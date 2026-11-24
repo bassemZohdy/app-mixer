@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AgentRunMetricsActor } from './agent-run-metrics.js';
+import type { AgentRunMetricsActor } from './runs/agent-run-metrics.js';
 import { limitServer } from './server-limits.js';
 
 export type AgentMetricsServerOptions = {

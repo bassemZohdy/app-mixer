@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SqliteAgentRuns, SqliteAgentApprovals, SqliteAgentActionJournal, markNoEffect, hadNoEffect } from '../dist/index.js';
-import { actionJSON } from '../dist/action-journal.js';
+import { actionJSON } from '../dist/runs/action-journal.js';
 
 const scope = { tenantId: 'tenant', agentId: 'agent' },
   service = { tenantId: 'tenant', principalId: 'service' },

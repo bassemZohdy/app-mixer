@@ -1,0 +1,447 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { performance } from 'node:perf_hooks';
+import { SqliteAgentTriggers } from '../runs/agent-triggers.js';
+import { PostgresAgentTriggerFoundation } from '../postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../postgres/postgres-run-lifecycle-foundation.js';
+import { SqliteAgentRuns } from '../runs/durable-runs.js';
+import { type AgentDefinitionVersion } from '../persistent-definitions.js';
+import { parseAgentTraceParent } from '../runs/agent-trace-context.js';
+import { ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, type Tracer, type Span } from '@opentelemetry/api';
+import { isIdentifier } from '../validation.js';
+import { BodyReadError, readBodyBytes } from '@app-mixer/shared';
+import { agentErrorStatus } from '../errors.js';
+import { limitServer, guard } from '../server-limits.js';
+
+type SourceIdentity = { tenantId: string; principalId: string; sourceId: string };
+type EventRequest = { agentId: string; eventId: string; eventType: string; payload: unknown };
+export type AgentEventWakeupTarget = { runId: string; revision: number; definitionVersion: number; status: string };
+export type AgentEventIngressObservation = {
+  outcome: 'accepted' | 'completed' | 'rejected' | 'unavailable' | 'disconnected';
+  status?: number;
+  reason?: 'busy' | 'timeout' | 'other';
+  durationMs: number;
+};
+type Options = {
+  triggers: SqliteAgentTriggers | PostgresAgentTriggerFoundation;
+  definitions: {
+    get: (tenantId: string, agentId: string) => AgentDefinitionVersion | undefined | Promise<AgentDefinitionVersion | undefined>;
+    getWithSignal?: (tenantId: string, agentId: string, signal: AbortSignal) => AgentDefinitionVersion | undefined | Promise<AgentDefinitionVersion | undefined>;
+  };
+  authenticate?: (request: IncomingMessage, signal: AbortSignal) => SourceIdentity | undefined | Promise<SourceIdentity | undefined>;
+  authenticateRaw?: (request: IncomingMessage, body: Buffer, signal: AbortSignal) => SourceIdentity | undefined | Promise<SourceIdentity | undefined>;
+  authorize: (identity: SourceIdentity, event: EventRequest, definition: AgentDefinitionVersion, signal: AbortSignal) => boolean | Promise<boolean>;
+  mapAuthenticatedBody?: (body: Buffer, identity: SourceIdentity, request: IncomingMessage) => EventRequest;
+  challengeAuthenticatedBody?: (body: Buffer, identity: SourceIdentity) => string | undefined;
+  contentType?: 'application/x-www-form-urlencoded';
+  acknowledgement?: 'twiml' | 'paddle' | 'linear' | 'discord';
+  traceParent?: (request: IncomingMessage, identity: SourceIdentity, event: EventRequest, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
+  /** Called when a host callback fails and the ingress continues without it (authentication, authorization, observation, trace parent). A throwing hook is ignored. */
+  onError?: (error: unknown, stage: 'authenticate' | 'authenticateRaw' | 'authorize' | 'observe' | 'traceParent') => void;
+  tracing?: { tracer: Tracer; propagateToRun?: boolean };
+  wakeup?: {
+    runs: SqliteAgentRuns | PostgresAgentRunLifecycleFoundation;
+    select: (identity: SourceIdentity, event: EventRequest, definition: AgentDefinitionVersion, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
+    authorize: (identity: SourceIdentity, event: EventRequest, definition: AgentDefinitionVersion, target: AgentEventWakeupTarget, signal: AbortSignal) => boolean | Promise<boolean>;
+  };
+  maxPending: number;
+  maxInFlight?: number;
+  requestTimeoutMs?: number;
+  abortOnDisconnect?: boolean;
+  observe?: (observation: AgentEventIngressObservation) => void | Promise<void>;
+  clock?: () => number;
+};
+const id = isIdentifier;
+const reply = (res: ServerResponse, status: number, body: unknown) => {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  res.end(JSON.stringify(body));
+};
+async function readBytes(req: IncomingMessage, contentType?: Options['contentType']): Promise<Buffer> {
+  if (req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i]!.toLowerCase() === 'content-type').length !== 1) throw Error('CONTENT_TYPE');
+  const expected = contentType === 'application/x-www-form-urlencoded' ? /^application\/x-www-form-urlencoded(?:\s*;|$)/i : /^application\/json(?:\s*;|$)/i;
+  try {
+    return await readBodyBytes(req, { maxBytes: 256 * 1024, contentType: expected });
+  } catch (error) {
+    if (!(error instanceof BodyReadError)) throw error;
+    throw Error(error.reason === 'too-large' ? 'TOO_LARGE' : 'CONTENT_TYPE');
+  }
+}
+function parse(raw: Buffer): EventRequest {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw.toString('utf8'));
+  } catch {
+    throw Error('INVALID');
+  }
+  return validateEvent(value);
+}
+function validateEvent(value: unknown): EventRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('INVALID');
+  const obj = value as Record<string, unknown>,
+    keys = Object.keys(obj);
+  if (keys.length !== 4 || !['agentId', 'eventId', 'eventType', 'payload'].every(key => Object.hasOwn(obj, key)) || !id(obj.agentId) || !id(obj.eventId) || !id(obj.eventType)) throw Error('INVALID');
+  return { agentId: obj.agentId, eventId: obj.eventId, eventType: obj.eventType, payload: obj.payload };
+}
+/** Host supplies authentication, source authorization, definitions and network boundary. */
+export function createAgentEventIngress(options: Options): Server {
+  if (
+    (options?.contentType !== undefined || options?.acknowledgement !== undefined) &&
+    (!(
+      (options.contentType === 'application/x-www-form-urlencoded' && options.acknowledgement === 'twiml') ||
+      (options.contentType === undefined && (options.acknowledgement === 'paddle' || options.acknowledgement === 'linear' || options.acknowledgement === 'discord'))
+    ) ||
+      typeof options.authenticateRaw !== 'function' ||
+      typeof options.mapAuthenticatedBody !== 'function' ||
+      (options.challengeAuthenticatedBody !== undefined && options.acknowledgement !== 'discord') ||
+      (options.acknowledgement === 'discord' && typeof options.challengeAuthenticatedBody !== 'function'))
+  )
+    throw Error('Invalid event ingress');
+  if (
+    !options ||
+    (!(options.triggers instanceof SqliteAgentTriggers) && !(options.triggers instanceof PostgresAgentTriggerFoundation)) ||
+    !options.definitions ||
+    typeof options.definitions.get !== 'function' ||
+    (options.definitions.getWithSignal !== undefined && typeof options.definitions.getWithSignal !== 'function') ||
+    (typeof options.authenticate === 'function') === (typeof options.authenticateRaw === 'function') ||
+    typeof options.authorize !== 'function' ||
+    !Number.isSafeInteger(options.maxPending) ||
+    options.maxPending < 1 ||
+    options.maxPending > 10000 ||
+    (options.maxInFlight !== undefined && (!Number.isSafeInteger(options.maxInFlight) || options.maxInFlight < 1 || options.maxInFlight > 10000)) ||
+    (options.requestTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(options.requestTimeoutMs) || options.requestTimeoutMs < 100 || options.requestTimeoutMs > 30000 || options.maxInFlight === undefined)) ||
+    (options.abortOnDisconnect !== undefined && typeof options.abortOnDisconnect !== 'boolean') ||
+    (options.observe !== undefined && typeof options.observe !== 'function') ||
+    (options.clock !== undefined && typeof options.clock !== 'function') ||
+    (options.traceParent !== undefined && typeof options.traceParent !== 'function') ||
+    (options.onError !== undefined && typeof options.onError !== 'function') ||
+    (options.mapAuthenticatedBody !== undefined && (typeof options.mapAuthenticatedBody !== 'function' || typeof options.authenticateRaw !== 'function')) ||
+    (options.challengeAuthenticatedBody !== undefined && (typeof options.challengeAuthenticatedBody !== 'function' || typeof options.authenticateRaw !== 'function')) ||
+    (options.tracing !== undefined &&
+      (!options.tracing ||
+        !options.tracing.tracer ||
+        typeof options.tracing.tracer.startSpan !== 'function' ||
+        (options.tracing.propagateToRun !== undefined && typeof options.tracing.propagateToRun !== 'boolean')))
+  )
+    throw Error('Invalid event ingress');
+  if (
+    options.wakeup !== undefined &&
+    (!options.wakeup ||
+      !(
+        (options.wakeup.runs instanceof SqliteAgentRuns && options.triggers instanceof SqliteAgentTriggers && options.triggers.sharesRunDatabase(options.wakeup.runs)) ||
+        (options.wakeup.runs instanceof PostgresAgentRunLifecycleFoundation &&
+          options.triggers instanceof PostgresAgentTriggerFoundation &&
+          options.wakeup.runs.sharesTriggerDatabase(options.triggers))
+      ) ||
+      typeof options.wakeup.select !== 'function' ||
+      typeof options.wakeup.authorize !== 'function')
+  )
+    throw Error('Invalid event ingress wakeup');
+  const wakeup = options.wakeup ? { runs: options.wakeup.runs, select: options.wakeup.select, authorize: options.wakeup.authorize } : undefined;
+  const {
+      triggers,
+      definitions,
+      authenticate,
+      authenticateRaw,
+      authorize,
+      maxPending,
+      maxInFlight,
+      requestTimeoutMs,
+      abortOnDisconnect,
+      observe,
+      mapAuthenticatedBody,
+      challengeAuthenticatedBody,
+      traceParent,
+      tracing,
+      contentType,
+      acknowledgement
+    } = options,
+    clock = options.clock ?? Date.now;
+  /** Report a failed host callback to the optional hook without letting a failing hook change the outcome. */
+  const reportError = (stage: 'authenticate' | 'authenticateRaw' | 'authorize' | 'observe' | 'traceParent', error: unknown): void => {
+    try {
+      options.onError?.(error, stage);
+    } catch {
+      /* a failing hook must not change the outcome */
+    }
+  };
+  const basicLookup = definitions.get.bind(definitions),
+    getDefinition = definitions.getWithSignal ? definitions.getWithSignal.bind(definitions) : (tenantId: string, agentId: string, _signal: AbortSignal) => basicLookup(tenantId, agentId);
+  let inFlight = 0;
+  return limitServer(
+    createServer(
+      guard(async (req, res) => {
+        let unavailableReason: 'busy' | 'timeout' | undefined,
+          providerAccepted = false;
+        if (observe) {
+          const started = performance.now();
+          let reported = false;
+          const report = (disconnected: boolean) => {
+            if (reported) return;
+            reported = true;
+            const status = disconnected ? undefined : res.statusCode,
+              outcome: AgentEventIngressObservation['outcome'] = disconnected
+                ? 'disconnected'
+                : status === 202 || providerAccepted
+                  ? 'accepted'
+                  : status === 200 || status === 204
+                    ? 'completed'
+                    : status !== undefined && status >= 500
+                      ? 'unavailable'
+                      : 'rejected';
+            try {
+              const result = observe({
+                outcome,
+                ...(status === undefined ? {} : { status }),
+                ...(outcome === 'unavailable' ? { reason: unavailableReason ?? 'other' } : {}),
+                durationMs: Math.max(0, performance.now() - started)
+              });
+              if (result && typeof result.then === 'function') Promise.resolve(result).catch(error => reportError('observe', error));
+            } catch (error) {
+              reportError('observe', error);
+            }
+          };
+          res.once('finish', () => report(false));
+          res.once('close', () => report(true));
+        }
+        if (req.method !== 'POST' || req.url !== '/events') {
+          reply(res, 404, { error: 'Not found' });
+          return;
+        }
+        if (maxInFlight !== undefined && inFlight >= maxInFlight) {
+          unavailableReason = 'busy';
+          reply(res, 503, { error: 'Event ingress busy' });
+          return;
+        }
+        inFlight++;
+        let expired = false;
+        const controller = new AbortController(),
+          onDisconnect = () => {
+            if (!res.writableFinished) {
+              expired = true;
+              controller.abort();
+            }
+          },
+          timer =
+            requestTimeoutMs === undefined
+              ? undefined
+              : setTimeout(() => {
+                  expired = true;
+                  unavailableReason = 'timeout';
+                  controller.abort();
+                  if (!res.writableEnded && !res.destroyed) {
+                    if (!req.complete) res.once('finish', () => req.destroy());
+                    reply(res, 503, { error: 'Event ingress timeout' });
+                  } else if (!req.complete) req.destroy();
+                }, requestTimeoutMs);
+        if (abortOnDisconnect) res.once('close', onDisconnect);
+        try {
+          let source: SourceIdentity | undefined, raw: Buffer | undefined;
+          if (authenticate) {
+            try {
+              source = await authenticate(req, controller.signal);
+            } catch (error) {
+              reportError('authenticate', error);
+            }
+            if (expired) return;
+            if (!source || !id(source.tenantId) || !id(source.principalId) || !id(source.sourceId) || source.sourceId.startsWith('schedule.')) {
+              reply(res, 401, { error: 'Unauthorized' });
+              return;
+            }
+            source = { tenantId: source.tenantId, principalId: source.principalId, sourceId: source.sourceId };
+          }
+          if (authenticateRaw || source) {
+            try {
+              raw = await readBytes(req, contentType);
+            } catch (error) {
+              if (expired) return;
+              const message = error instanceof Error ? error.message : '';
+              reply(res, message === 'TOO_LARGE' ? 413 : message === 'CONTENT_TYPE' ? 415 : 400, { error: 'Invalid event' });
+              return;
+            }
+          }
+          if (expired) return;
+          if (authenticateRaw && raw) {
+            try {
+              source = await authenticateRaw(req, Buffer.from(raw), controller.signal);
+            } catch (error) {
+              reportError('authenticateRaw', error);
+            }
+          }
+          if (expired) return;
+          if (!source || !id(source.tenantId) || !id(source.principalId) || !id(source.sourceId) || source.sourceId.startsWith('schedule.')) {
+            reply(res, 401, { error: 'Unauthorized' });
+            return;
+          }
+          source = { tenantId: source.tenantId, principalId: source.principalId, sourceId: source.sourceId };
+          if (challengeAuthenticatedBody) {
+            try {
+              const challenge = challengeAuthenticatedBody(Buffer.from(raw!), { ...source });
+              if (challenge !== undefined) {
+                if (typeof challenge !== 'string' || !/^[\x21-\x7e]{1,512}$/.test(challenge)) throw Error('Invalid challenge');
+                if (acknowledgement === 'discord') {
+                  if (challenge !== 'discord-ping') throw Error('Invalid challenge');
+                  res.writeHead(204, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+                  res.end();
+                } else reply(res, 200, { challenge });
+                return;
+              }
+            } catch {
+              reply(res, 400, { error: 'Invalid event' });
+              return;
+            }
+          }
+          let event: EventRequest;
+          try {
+            event = mapAuthenticatedBody ? validateEvent(structuredClone(mapAuthenticatedBody(Buffer.from(raw!), { ...source }, req))) : parse(raw!);
+          } catch {
+            reply(res, 400, { error: 'Invalid event' });
+            return;
+          }
+          try {
+            const selected = await getDefinition(source.tenantId, event.agentId, controller.signal);
+            if (expired) return;
+            if (!selected || !selected.manifest.lifecycle.enabled || selected.manifest.tenantId !== source.tenantId || selected.manifest.agentId !== event.agentId) {
+              reply(res, 403, { error: 'Forbidden' });
+              return;
+            }
+            const definition = structuredClone(selected);
+            let allowed = false;
+            try {
+              allowed = (await authorize({ ...source }, structuredClone(event), structuredClone(definition), controller.signal)) === true;
+            } catch (error) {
+              reportError('authorize', error);
+            }
+            if (expired) return;
+            let parent: string | undefined;
+            if (allowed && traceParent)
+              try {
+                const candidate = await traceParent(req, { ...source }, structuredClone(event), controller.signal);
+                if (parseAgentTraceParent(candidate)) parent = candidate;
+              } catch (error) {
+                reportError('traceParent', error);
+              }
+            if (expired) return;
+            let target: AgentEventWakeupTarget | undefined, selectedRun: string | undefined;
+            if (allowed && wakeup) {
+              selectedRun = await wakeup.select({ ...source }, structuredClone(event), structuredClone(definition), controller.signal);
+              if (expired) return;
+              if (selectedRun !== undefined) {
+                if (!id(selectedRun)) throw Error('Invalid wakeup selection');
+                const run = await wakeup.runs.get({ tenantId: source.tenantId, agentId: event.agentId }, selectedRun);
+                if (expired) return;
+                if (!run || run.definitionVersion !== definition.version) {
+                  reply(res, 403, { error: 'Forbidden' });
+                  return;
+                }
+                target = { runId: run.runId, revision: run.revision, definitionVersion: run.definitionVersion, status: run.status };
+                if ((await wakeup.authorize({ ...source }, structuredClone(event), structuredClone(definition), { ...target }, controller.signal)) !== true) {
+                  if (!expired) reply(res, 403, { error: 'Forbidden' });
+                  return;
+                }
+                if (expired) return;
+              }
+              const confirmed = await wakeup.select({ ...source }, structuredClone(event), structuredClone(definition), controller.signal);
+              if (expired) return;
+              if (confirmed !== selectedRun) {
+                reply(res, 409, { error: 'Event conflict' });
+                return;
+              }
+            }
+            const latest = await getDefinition(source.tenantId, event.agentId, controller.signal);
+            if (expired) return;
+            if (
+              !allowed ||
+              !latest ||
+              latest.version !== definition.version ||
+              !latest.manifest.lifecycle.enabled ||
+              latest.manifest.tenantId !== source.tenantId ||
+              latest.manifest.agentId !== event.agentId
+            ) {
+              reply(res, 403, { error: 'Forbidden' });
+              return;
+            }
+            const now = triggers instanceof SqliteAgentTriggers ? clock() : 0,
+              deadline = now + definition.manifest.lifecycle.runTimeoutMs;
+            if (!Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(deadline)) throw Error('Invalid clock');
+            let span: Span | undefined;
+            try {
+              if (tracing) {
+                const parsed = parseAgentTraceParent(parent),
+                  context = parsed ? trace.setSpanContext(ROOT_CONTEXT, parsed) : ROOT_CONTEXT;
+                span = tracing.tracer.startSpan('agent.event.enqueue', { kind: SpanKind.PRODUCER }, context);
+                if (tracing.propagateToRun) {
+                  const sc = span.spanContext(),
+                    candidate = `00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2, '0')}`;
+                  if (parseAgentTraceParent(candidate)) parent = candidate;
+                }
+              }
+            } catch {}
+            let result: { runId: string; duplicate: boolean };
+            try {
+              if (target && wakeup) {
+                const wakeEvent = { sourceId: source.sourceId, principalId: source.principalId, eventId: event.eventId, eventType: event.eventType, payload: event.payload },
+                  wakeScope = { tenantId: source.tenantId, agentId: event.agentId },
+                  resumed =
+                    wakeup.runs instanceof PostgresAgentRunLifecycleFoundation
+                      ? await wakeup.runs.resumeWithTrigger(wakeScope, target.runId, target.revision, wakeEvent, controller.signal)
+                      : wakeup.runs.resumeWithTrigger(wakeScope, target.runId, target.revision, wakeEvent, now);
+                result = { runId: resumed.run.runId, duplicate: resumed.duplicate };
+              } else if (triggers instanceof PostgresAgentTriggerFoundation)
+                result = await triggers.enqueue(
+                  { tenantId: source.tenantId, agentId: event.agentId },
+                  { sourceId: source.sourceId, principalId: source.principalId, eventId: event.eventId, eventType: event.eventType, payload: event.payload },
+                  {
+                    definitionVersion: definition.version,
+                    maxAttempts: definition.manifest.lifecycle.maxAttempts,
+                    runTimeoutMs: definition.manifest.lifecycle.runTimeoutMs,
+                    maxPending,
+                    ...(parent ? { traceParent: parent } : {})
+                  },
+                  controller.signal
+                );
+              else
+                result = triggers.enqueue(
+                  { tenantId: source.tenantId, agentId: event.agentId },
+                  { sourceId: source.sourceId, principalId: source.principalId, eventId: event.eventId, eventType: event.eventType, payload: event.payload },
+                  { definitionVersion: definition.version, maxAttempts: definition.manifest.lifecycle.maxAttempts, deadline, maxPending, ...(parent ? { traceParent: parent } : {}) },
+                  now
+                );
+              try {
+                span?.setAttribute('app_mixer.agent.event.outcome', result.duplicate ? 'duplicate' : 'accepted');
+              } catch {}
+            } catch (error) {
+              try {
+                span?.setStatus({ code: SpanStatusCode.ERROR });
+                span?.setAttribute('error.type', 'agent_event_enqueue_failed');
+              } catch {}
+              throw error;
+            } finally {
+              try {
+                span?.end();
+              } catch {}
+            }
+            if (expired) return;
+            if ((acknowledgement === 'paddle' || acknowledgement === 'linear' || acknowledgement === 'discord') && !result.duplicate) providerAccepted = true;
+            if (acknowledgement === 'discord') {
+              res.writeHead(204, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+              res.end();
+            } else if (acknowledgement === 'twiml') {
+              res.writeHead(200, { 'content-type': 'text/xml; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+              res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
+            } else reply(res, acknowledgement === 'paddle' || acknowledgement === 'linear' || result.duplicate ? 200 : 202, result);
+          } catch (error) {
+            if (expired) return;
+            const mapped = agentErrorStatus(error),
+              status = mapped === 409 || mapped === 429 || mapped === 400 ? mapped : 500;
+            reply(res, status, { error: status === 409 ? 'Event conflict' : status === 429 ? 'Backlog full' : status === 400 ? 'Invalid event' : 'Event unavailable' });
+          }
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+          if (abortOnDisconnect) res.off('close', onDisconnect);
+          inFlight--;
+        }
+      })
+    )
+  );
+}
+export type { Options as AgentEventIngressOptions, SourceIdentity as AgentEventSourceIdentity, EventRequest as AgentEventRequest };

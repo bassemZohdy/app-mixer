@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { SqliteAgentDefinitions, createAgentEventIngress } from '../dist/index.js';
 import { initializeExperimentalSharedAgentStorage } from '../dist/shared-run-experimental.js';
-import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres/postgres-run-lifecycle-foundation.js';
 const transaction = pool => async operation => {
   const client = await pool.connect();
   try {

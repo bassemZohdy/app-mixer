@@ -1,5 +1,5 @@
 import type { ConfiguredAgentOperationObservation } from './configured-runtime.js';
-import type { AgentRunMetricsActor } from './agent-run-metrics.js';
+import type { AgentRunMetricsActor } from './runs/agent-run-metrics.js';
 import { isIdentifier } from './validation.js';
 const kinds = ['model', 'capability'] as const,
   outcomes = ['succeeded', 'failed'] as const,

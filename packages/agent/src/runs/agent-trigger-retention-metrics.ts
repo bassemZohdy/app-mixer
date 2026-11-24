@@ -1,0 +1,133 @@
+import { DatabaseSync } from 'node:sqlite';
+import type { AgentRunScope } from './durable-runs.js';
+import type { AgentRunMetricsActor } from './agent-run-metrics.js';
+import { isIdentifier } from '../validation.js';
+
+export type TriggerRetentionMetricsOptions = {
+  scope: AgentRunScope;
+  authorize: (actor: AgentRunMetricsActor, scope: AgentRunScope) => boolean | Promise<boolean>;
+  authorizeWithSignal?: (actor: AgentRunMetricsActor, scope: AgentRunScope, signal: AbortSignal) => boolean | Promise<boolean>;
+  minAgeMs: number;
+  ageFrom?: 'receipt' | 'completion';
+  clock?: () => number;
+};
+export type TriggerRetentionMetricsSnapshot = { eligible: number; notYetEligible: number; unknownAge: number; oldestEligibleSeconds: number };
+const id = isIdentifier;
+export function readTriggerRetentionMetrics(db: DatabaseSync, scope: AgentRunScope, now: number, minAgeMs: number, ageFrom: 'receipt' | 'completion'): TriggerRetentionMetricsSnapshot {
+  if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid agent metrics clock');
+  const timestamp = ageFrom === 'completion' ? 'c.completed_at' : 't.received_at',
+    cutoff = now - minAgeMs;
+  const row = db
+    .prepare(
+      `SELECT SUM(CASE WHEN ${timestamp} IS NOT NULL AND ${timestamp}<? THEN 1 ELSE 0 END) AS eligible,SUM(CASE WHEN ${timestamp} IS NOT NULL AND ${timestamp}>=? THEN 1 ELSE 0 END) AS not_yet,
+        SUM(CASE 
+        WHEN ${timestamp} IS NULL THEN 1 ELSE 0 END) AS unknown_age,MIN(CASE WHEN ${timestamp}<? THEN ${timestamp} END) AS oldest,SUM(CASE WHEN ${timestamp} IS NOT NULL AND 
+          (typeof(${timestamp})<>'integer' OR ${timestamp}<0 OR ${timestamp}>9007199254740991) THEN 1 ELSE 0 END) AS invalid FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id 
+            AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN 
+              agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND 
+                c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND i.agent_id=? AND r.status IN ('succeeded','failed','cancelled') AND d.run_id IS NULL`
+    )
+    .get(cutoff, cutoff, cutoff, scope.tenantId, scope.agentId);
+  if (!row) throw Error('Invalid trigger retention metrics data');
+  const eligible = Number(row.eligible ?? 0),
+    notYetEligible = Number(row.not_yet ?? 0),
+    unknownAge = Number(row.unknown_age ?? 0),
+    invalid = Number(row.invalid ?? 0),
+    oldest = row.oldest === null ? undefined : Number(row.oldest);
+  if (
+    ![eligible, notYetEligible, unknownAge, invalid].every(value => Number.isSafeInteger(value) && value >= 0) ||
+    invalid !== 0 ||
+    (eligible === 0 && oldest !== undefined) ||
+    (eligible > 0 && (oldest === undefined || !Number.isSafeInteger(oldest) || oldest < 0 || oldest >= cutoff))
+  )
+    throw Error('Invalid trigger retention metrics data');
+  return { eligible, notYetEligible, unknownAge, oldestEligibleSeconds: oldest === undefined ? 0 : (now - oldest) / 1000 };
+}
+export function formatTriggerRetentionMetrics(data: TriggerRetentionMetricsSnapshot): string[] {
+  return [
+    '# HELP app_mixer_trigger_retention_candidates Terminal unredacted trigger payloads by age eligibility.',
+    '# TYPE app_mixer_trigger_retention_candidates gauge',
+    `app_mixer_trigger_retention_candidates{state="eligible"} ${data.eligible}`,
+    `app_mixer_trigger_retention_candidates{state="not_yet_eligible"} ${data.notYetEligible}`,
+    `app_mixer_trigger_retention_candidates{state="unknown_age"} ${data.unknownAge}`,
+    '# HELP app_mixer_trigger_retention_oldest_eligible_seconds Age of the oldest eligible trigger payload.',
+    '# TYPE app_mixer_trigger_retention_oldest_eligible_seconds gauge',
+    `app_mixer_trigger_retention_oldest_eligible_seconds ${data.oldestEligibleSeconds}`
+  ];
+}
+/** Authorized, fixed-scope retention backlog gauges without event or run identifiers. */
+export class SqliteTriggerRetentionMetrics {
+  private readonly db: DatabaseSync;
+  private readonly scope: AgentRunScope;
+  private readonly authorize: TriggerRetentionMetricsOptions['authorize'];
+  private readonly authorizeWithSignal: TriggerRetentionMetricsOptions['authorizeWithSignal'];
+  private readonly minAgeMs: number;
+  private readonly ageFrom: 'receipt' | 'completion';
+  private readonly clock: () => number;
+  constructor(path: string, options: TriggerRetentionMetricsOptions) {
+    if (
+      typeof path !== 'string' ||
+      !path ||
+      !options ||
+      !options.scope ||
+      !id(options.scope.tenantId) ||
+      !id(options.scope.agentId) ||
+      typeof options.authorize !== 'function' ||
+      (options.authorizeWithSignal !== undefined && typeof options.authorizeWithSignal !== 'function') ||
+      !Number.isSafeInteger(options.minAgeMs) ||
+      options.minAgeMs < 1 ||
+      (options.ageFrom !== undefined && !['receipt', 'completion'].includes(options.ageFrom)) ||
+      (options.clock !== undefined && typeof options.clock !== 'function')
+    )
+      throw Error('Invalid trigger retention metrics');
+    this.scope = { tenantId: options.scope.tenantId, agentId: options.scope.agentId };
+    this.authorize = options.authorize;
+    this.authorizeWithSignal = options.authorizeWithSignal;
+    this.minAgeMs = options.minAgeMs;
+    this.ageFrom = options.ageFrom ?? 'receipt';
+    this.clock = options.clock ?? Date.now;
+    this.db = new DatabaseSync(path, { readOnly: true });
+    try {
+      this.db.exec('PRAGMA busy_timeout=5000; PRAGMA query_only=ON');
+      for (const table of ['agent_runs', 'agent_trigger_inbox', 'agent_trigger_redactions', 'agent_trigger_receipts', 'agent_run_terminal_times'])
+        if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) throw Error('Trigger retention metrics unavailable');
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+  close(): void {
+    this.db.close();
+  }
+  private actor(actor: AgentRunMetricsActor): AgentRunMetricsActor {
+    if (!actor || actor.tenantId !== this.scope.tenantId || !id(actor.principalId)) throw Error('Invalid agent metrics actor');
+    return { tenantId: actor.tenantId, principalId: actor.principalId };
+  }
+  private async permit(actor: AgentRunMetricsActor, signal: AbortSignal = new AbortController().signal): Promise<void> {
+    if (signal.aborted) throw Error('Agent metrics unavailable');
+    let allowed = false;
+    try {
+      allowed = (await (this.authorizeWithSignal ? this.authorizeWithSignal({ ...actor }, { ...this.scope }, signal) : this.authorize({ ...actor }, { ...this.scope }))) === true;
+    } catch {}
+    if (signal.aborted) throw Error('Agent metrics unavailable');
+    if (!allowed) throw Error('Agent metrics access denied');
+  }
+  async snapshot(actor: AgentRunMetricsActor): Promise<TriggerRetentionMetricsSnapshot> {
+    return this.snapshotWithSignal(actor, new AbortController().signal);
+  }
+  private async snapshotWithSignal(actor: AgentRunMetricsActor, signal: AbortSignal): Promise<TriggerRetentionMetricsSnapshot> {
+    const who = this.actor(actor);
+    await this.permit(who, signal);
+    const result = readTriggerRetentionMetrics(this.db, this.scope, this.clock(), this.minAgeMs, this.ageFrom);
+    await this.permit(who, signal);
+    return result;
+  }
+  async render(actor: AgentRunMetricsActor): Promise<string> {
+    return this.renderWithSignal(actor, new AbortController().signal);
+  }
+  async renderWithSignal(actor: AgentRunMetricsActor, signal: AbortSignal): Promise<string> {
+    if (!(signal instanceof AbortSignal)) throw Error('Invalid agent metrics signal');
+    const data = await this.snapshotWithSignal(actor, signal);
+    return [...formatTriggerRetentionMetrics(data), ''].join('\n');
+  }
+}

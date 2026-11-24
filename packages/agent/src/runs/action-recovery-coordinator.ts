@@ -1,0 +1,265 @@
+import { PostgresAgentActionRecoveryDiscoveryFoundation } from '../postgres/postgres-recovery-discovery-foundation.js';
+import type { AgentRunScope } from './durable-runs.js';
+import { AgentActionRecoveryWorker } from './action-recovery-worker.js';
+import { SqliteAgentActionRecoveryDiscovery, type AgentActionRecoveryCandidate, type AgentActionRecoveryDiscoveryActor } from './action-recovery-discovery.js';
+import { isIdentifier } from '../validation.js';
+
+export type AgentActionRecoveryCoordinatorObservation = { outcome: 'completed' | 'failed' | 'stopped'; reconciled: number; durationMs: number };
+type Session = { worker: AgentActionRecoveryWorker; close: () => void | Promise<void> };
+type Options = {
+  scope: AgentRunScope;
+  discovery: SqliteAgentActionRecoveryDiscovery | PostgresAgentActionRecoveryDiscoveryFoundation;
+  actor: AgentActionRecoveryDiscoveryActor;
+  authorize: (candidate: AgentActionRecoveryCandidate, signal: AbortSignal) => boolean | Promise<boolean>;
+  open: (candidate: AgentActionRecoveryCandidate, signal: AbortSignal) => Session | Promise<Session>;
+  maxRunsPerPass: number;
+  pollMs: number;
+  callbackTimeoutMs?: number;
+  maxPendingCallbacks?: number;
+  observe?: (observation: AgentActionRecoveryCoordinatorObservation) => void | Promise<void>;
+  onError: (error: unknown, runId?: string) => void | Promise<void>;
+};
+const id = isIdentifier;
+/** Explicitly started, bounded recovery passes over host-authorized uncertain runs. */
+export class AgentActionRecoveryCoordinator {
+  private readonly discovery: SqliteAgentActionRecoveryDiscovery | PostgresAgentActionRecoveryDiscoveryFoundation;
+  private readonly scope: AgentRunScope;
+  private readonly actor: AgentActionRecoveryDiscoveryActor;
+  private readonly authorize: Options['authorize'];
+  private readonly open: Options['open'];
+  private readonly maxRunsPerPass: number;
+  private readonly pollMs: number;
+  private readonly callbackTimeoutMs: number | undefined;
+  private readonly maxPendingCallbacks: number | undefined;
+  private callbacksInFlight = 0;
+  private readonly observe: Options['observe'];
+  private readonly onError: Options['onError'];
+  private cursor?: string;
+  private active = false;
+  private generation = 0;
+  private pending?: Promise<number>;
+  private controller?: AbortController;
+  private timer?: ReturnType<typeof setTimeout>;
+  constructor(options: Options) {
+    if (
+      !options ||
+      (!(options.discovery instanceof SqliteAgentActionRecoveryDiscovery) && !(options.discovery instanceof PostgresAgentActionRecoveryDiscoveryFoundation)) ||
+      !options.scope ||
+      !id(options.scope.tenantId) ||
+      !id(options.scope.agentId) ||
+      !options.discovery.isBoundTo(options.scope) ||
+      !options.actor ||
+      options.actor.tenantId !== options.scope.tenantId ||
+      !id(options.actor.tenantId) ||
+      !id(options.actor.principalId) ||
+      typeof options.authorize !== 'function' ||
+      typeof options.open !== 'function' ||
+      !Number.isSafeInteger(options.maxRunsPerPass) ||
+      options.maxRunsPerPass < 1 ||
+      options.maxRunsPerPass > 100 ||
+      !Number.isSafeInteger(options.pollMs) ||
+      options.pollMs < 100 ||
+      options.pollMs > 3600000 ||
+      typeof options.onError !== 'function' ||
+      (options.observe !== undefined && typeof options.observe !== 'function')
+    )
+      throw Error('Invalid action recovery coordinator');
+    if (
+      (options.callbackTimeoutMs === undefined) !== (options.maxPendingCallbacks === undefined) ||
+      (options.callbackTimeoutMs !== undefined && (!Number.isInteger(options.callbackTimeoutMs) || options.callbackTimeoutMs < 100 || options.callbackTimeoutMs > 30000)) ||
+      (options.maxPendingCallbacks !== undefined && (!Number.isInteger(options.maxPendingCallbacks) || options.maxPendingCallbacks < 1 || options.maxPendingCallbacks > 100))
+    )
+      throw Error('Invalid action recovery coordinator');
+    this.observe = options.observe;
+    this.callbackTimeoutMs = options.callbackTimeoutMs;
+    this.maxPendingCallbacks = options.maxPendingCallbacks;
+    this.discovery = options.discovery;
+    this.scope = { tenantId: options.scope.tenantId, agentId: options.scope.agentId };
+    this.actor = { tenantId: options.actor.tenantId, principalId: options.actor.principalId };
+    this.authorize = options.authorize;
+    this.open = options.open;
+    this.maxRunsPerPass = options.maxRunsPerPass;
+    this.pollMs = options.pollMs;
+    this.onError = options.onError;
+  }
+  private report(error: unknown, runId?: string): void {
+    try {
+      const result = this.onError(error, runId);
+      if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
+    } catch {}
+  }
+  private async callback<T>(fn: (signal: AbortSignal) => T | Promise<T>, parent: AbortSignal, disposeLate?: (value: T) => void | Promise<void>): Promise<T> {
+    if (this.callbackTimeoutMs === undefined) return await fn(parent);
+    if (parent.aborted || this.callbacksInFlight >= this.maxPendingCallbacks!) throw Error('Action coordinator callback unavailable');
+    const controller = new AbortController(),
+      signal = AbortSignal.any([parent, controller.signal]);
+    this.callbacksInFlight++;
+    const task = Promise.resolve().then(() => {
+      if (signal.aborted) throw Error('Action coordinator callback unavailable');
+      return fn(signal);
+    });
+    let abort = () => {},
+      accepted = false;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(Error('Action coordinator callback unavailable'));
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    });
+    const timer = setTimeout(() => controller.abort(), this.callbackTimeoutMs);
+    try {
+      const result = await Promise.race([task, cancelled]);
+      if (signal.aborted) throw Error('Action coordinator callback unavailable');
+      accepted = true;
+      return result;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+      if (accepted) this.callbacksInFlight--;
+      else
+        void task
+          .then(
+            async value => {
+              if (disposeLate) await disposeLate(value);
+            },
+            () => {}
+          )
+          .catch(error => this.report(error))
+          .finally(() => {
+            this.callbacksInFlight--;
+          });
+    }
+  }
+  private async closeSession(session: Session): Promise<void> {
+    if (this.callbackTimeoutMs === undefined) {
+      await session.close();
+      return;
+    }
+    this.callbacksInFlight++;
+    const task = Promise.resolve().then(() => session.close());
+    void task.then(
+      () => {
+        this.callbacksInFlight--;
+      },
+      () => {
+        this.callbacksInFlight--;
+      }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(Error('Action coordinator cleanup unavailable')), this.callbackTimeoutMs);
+    });
+    try {
+      await Promise.race([task, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  private async pass(keepGoing: () => boolean, signal: AbortSignal): Promise<number> {
+    const page = await this.callback(
+      callbackSignal =>
+        this.discovery instanceof PostgresAgentActionRecoveryDiscoveryFoundation
+          ? this.discovery.list(this.actor, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxRunsPerPass }, callbackSignal)
+          : this.discovery.list(this.actor, { ...(this.cursor !== undefined ? { after: this.cursor } : {}), limit: this.maxRunsPerPass }),
+      signal
+    );
+    let settled = 0;
+    for (const item of page.items) {
+      if (!keepGoing()) return settled;
+      let session: Session | undefined;
+      try {
+        if (item.runStatus !== 'uncertain' || item.uncertain === 0) continue;
+        if ((await this.callback(callbackSignal => this.authorize(structuredClone(item), callbackSignal), signal)) !== true || !keepGoing()) continue;
+        session = await this.callback(
+          callbackSignal => this.open(structuredClone(item), callbackSignal),
+          signal,
+          async late => {
+            if (late && typeof late.close === 'function') await late.close();
+          }
+        );
+        if (!session || !(session.worker instanceof AgentActionRecoveryWorker) || !session.worker.isBoundTo(this.scope, item.runId) || typeof session.close !== 'function')
+          throw Error('Invalid action recovery session');
+        if (!keepGoing() || (await this.callback(callbackSignal => this.authorize(structuredClone(item), callbackSignal), signal)) !== true || !keepGoing()) continue;
+        const stop = () => {
+          void session!.worker.stop();
+        };
+        signal.addEventListener('abort', stop, { once: true });
+        try {
+          if (!keepGoing()) continue;
+          settled += await session.worker.runOnce();
+        } finally {
+          signal.removeEventListener('abort', stop);
+          await session.worker.stop();
+        }
+      } catch (error) {
+        if (keepGoing()) this.report(error, item.runId);
+      } finally {
+        if (session && typeof session.close === 'function')
+          try {
+            await this.closeSession(session);
+          } catch (error) {
+            if (keepGoing()) this.report(error, item.runId);
+          }
+        if (keepGoing()) this.cursor = item.runId;
+      }
+    }
+    if (keepGoing() && !page.nextAfter) delete this.cursor;
+    return settled;
+  }
+  private begin(keepGoing: () => boolean): Promise<number> {
+    const controller = new AbortController();
+    this.controller = controller;
+    const started = performance.now(),
+      pending = this.pass(() => !controller.signal.aborted && keepGoing(), controller.signal);
+    this.pending = pending;
+    const observe = (outcome: AgentActionRecoveryCoordinatorObservation['outcome'], reconciled: number) => {
+      try {
+        const result = this.observe?.({ outcome, reconciled, durationMs: Math.max(0, performance.now() - started) });
+        if (result && typeof result.then === 'function') Promise.resolve(result).catch(() => {});
+      } catch {}
+    };
+    void pending.then(
+      count => observe(controller.signal.aborted ? 'stopped' : 'completed', count),
+      () => observe(controller.signal.aborted ? 'stopped' : 'failed', 0)
+    );
+    void pending
+      .finally(() => {
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
+      })
+      .catch(() => {});
+    return pending;
+  }
+  runOnce(): Promise<number> {
+    if (this.active || this.pending) throw Error('Action recovery coordinator already running');
+    const generation = this.generation;
+    return this.begin(() => this.generation === generation);
+  }
+  start(): void {
+    if (this.active || this.pending) throw Error('Action recovery coordinator already running');
+    this.active = true;
+    const generation = ++this.generation,
+      loop = () => {
+        if (!this.active || this.generation !== generation) return;
+        const pending = this.begin(() => this.active && this.generation === generation);
+        void pending
+          .catch(error => this.report(error))
+          .finally(() => {
+            if (this.active && this.generation === generation) this.timer = setTimeout(loop, this.pollMs);
+          });
+      };
+    loop();
+  }
+  async stop(): Promise<void> {
+    this.active = false;
+    this.generation++;
+    if (this.timer) clearTimeout(this.timer);
+    delete this.timer;
+    this.controller?.abort();
+    const pending = this.pending;
+    if (pending)
+      try {
+        await pending;
+      } catch {}
+  }
+}
+export type { Options as AgentActionRecoveryCoordinatorOptions, Session as AgentActionRecoverySession };

@@ -1,0 +1,263 @@
+import { DatabaseSync } from 'node:sqlite';
+import { ensureAgentRunTerminalSchema } from './agent-run-terminal.js';
+import { ensureTriggerReceiptSchema } from './agent-trigger-receipts.js';
+import type { AgentRunScope } from './durable-runs.js';
+import { openDatabase } from '@app-mixer/shared';
+import { isIdentifier } from '../validation.js';
+
+type Actor = { tenantId: string; principalId: string };
+type Options = {
+  scope: AgentRunScope;
+  authorize: (actor: Actor, action: 'redact' | 'read', runId: string, signal?: AbortSignal) => boolean | Promise<boolean>;
+  authorizeDiscovery?: (actor: Actor, scope: AgentRunScope, signal?: AbortSignal) => boolean | Promise<boolean>;
+};
+export type TriggerRedactionCandidate = { runId: string; status: 'succeeded' | 'failed' | 'cancelled'; receivedAt?: number; completedAt?: number };
+const id = isIdentifier;
+
+/** Explicit host-authorized payload redaction for terminal local agent runs. */
+export class SqliteAgentTriggerRetention {
+  private readonly db: DatabaseSync;
+  private readonly scope: AgentRunScope;
+  private readonly authorize: Options['authorize'];
+  private readonly authorizeDiscovery: Options['authorizeDiscovery'];
+  constructor(path: string, options: Options) {
+    if (
+      !options ||
+      !options.scope ||
+      !id(options.scope.tenantId) ||
+      !id(options.scope.agentId) ||
+      typeof options.authorize !== 'function' ||
+      (options.authorizeDiscovery !== undefined && typeof options.authorizeDiscovery !== 'function')
+    )
+      throw Error('Invalid trigger retention');
+    this.scope = { tenantId: options.scope.tenantId, agentId: options.scope.agentId };
+    this.authorize = options.authorize;
+    this.authorizeDiscovery = options.authorizeDiscovery;
+    this.db = openDatabase(path);
+    try {
+      this.db.exec('PRAGMA busy_timeout=5000');
+      for (const name of ['agent_runs', 'agent_trigger_inbox', 'agent_trigger_redactions'])
+        if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)) throw Error('Trigger inbox unavailable');
+      ensureTriggerReceiptSchema(this.db);
+      ensureAgentRunTerminalSchema(this.db);
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
+  }
+  close(): void {
+    this.db.close();
+  }
+  private actor(actor: Actor, runId: string): Actor {
+    if (!actor || actor.tenantId !== this.scope.tenantId || !id(actor.principalId) || !id(runId)) throw Error('Invalid trigger retention request');
+    return { tenantId: actor.tenantId, principalId: actor.principalId };
+  }
+  /** List terminal unredacted runs; discovery is a separate scope-wide permission. */
+  async listCandidates(
+    actor: Actor,
+    options: { after?: string; limit?: number; receivedBefore?: number; includeReceivedAt?: boolean; completedBefore?: number; includeCompletedAt?: boolean } = {},
+    signal?: AbortSignal
+  ): Promise<{ items: TriggerRedactionCandidate[]; nextAfter?: string }> {
+    const who = this.actor(actor, 'discovery'),
+      after = options?.after ?? '',
+      limit = options?.limit ?? 50,
+      receivedBefore = options?.receivedBefore,
+      includeReceivedAt = options?.includeReceivedAt ?? false,
+      completedBefore = options?.completedBefore,
+      includeCompletedAt = options?.includeCompletedAt ?? false;
+    if (
+      !options ||
+      (signal !== undefined && !(signal instanceof AbortSignal)) ||
+      (completedBefore !== undefined && (!Number.isSafeInteger(completedBefore) || completedBefore < 0)) ||
+      typeof includeCompletedAt !== 'boolean' ||
+      (receivedBefore !== undefined && (!Number.isSafeInteger(receivedBefore) || receivedBefore < 0)) ||
+      typeof includeReceivedAt !== 'boolean' ||
+      (after !== '' && !id(after)) ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 100 ||
+      !this.authorizeDiscovery
+    )
+      throw Error('Invalid trigger retention discovery');
+    const permit = async () => {
+      if (signal?.aborted) throw Error('Trigger retention cancelled');
+      let allowed: boolean;
+      try {
+        allowed = await this.authorizeDiscovery!({ ...who }, { ...this.scope }, signal);
+      } catch (error) {
+        if (signal?.aborted) throw Error('Trigger retention cancelled');
+        throw error;
+      }
+      if (signal?.aborted) throw Error('Trigger retention cancelled');
+      if (allowed !== true) throw Error('Trigger retention discovery access denied');
+    };
+    await permit();
+    const rows = this.db
+      .prepare(
+        'SELECT i.run_id,r.status,t.received_at,c.completed_at FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND r.run_id=i.run_id LEFT JOIN ' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          'agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON t.tenant_id=i.tenant_id AND ' +
+          't.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id WHERE i.tenant_id=? AND ' +
+          "i.agent_id=? AND i.run_id>? AND r.status IN ('succeeded','failed'," +
+          "'cancelled') AND d.run_id IS NULL AND (? IS NULL OR t.received_at<?) AND (? IS NULL OR c.completed_at<?) ORDER BY i.run_id LIMIT ?"
+      )
+      .all(this.scope.tenantId, this.scope.agentId, after, receivedBefore ?? null, receivedBefore ?? null, completedBefore ?? null, completedBefore ?? null, limit + 1);
+    const items = rows.slice(0, limit).map(row => {
+      if (!id(row.run_id) || !['succeeded', 'failed', 'cancelled'].includes(String(row.status))) throw Error('Invalid trigger retention result');
+      const receivedAt = row.received_at === null ? undefined : Number(row.received_at);
+      if (receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) || receivedAt < 0)) throw Error('Invalid trigger receipt');
+      const completedAt = row.completed_at === null ? undefined : Number(row.completed_at);
+      if (completedAt !== undefined && (!Number.isSafeInteger(completedAt) || completedAt < 0)) throw Error('Invalid run terminal time');
+      return {
+        runId: row.run_id,
+        status: row.status as TriggerRedactionCandidate['status'],
+        ...((includeReceivedAt || receivedBefore !== undefined) && receivedAt !== undefined ? { receivedAt } : {}),
+        ...((includeCompletedAt || completedBefore !== undefined) && completedAt !== undefined ? { completedAt } : {})
+      };
+    });
+    await permit();
+    return { items, ...(rows.length > limit ? { nextAfter: items[items.length - 1]!.runId } : {}) };
+  }
+  async redact(actor: Actor, runId: string, now = Date.now(), signal?: AbortSignal, eligibility?: { minAgeMs: number; clock: () => number; basis?: 'receipt' | 'completion' }): Promise<boolean> {
+    const who = this.actor(actor, runId);
+    if (
+      !Number.isSafeInteger(now) ||
+      now < 0 ||
+      (signal !== undefined && !(signal instanceof AbortSignal)) ||
+      (eligibility !== undefined &&
+        (!eligibility ||
+          !Number.isSafeInteger(eligibility.minAgeMs) ||
+          eligibility.minAgeMs < 1 ||
+          typeof eligibility.clock !== 'function' ||
+          (eligibility.basis !== undefined && !['receipt', 'completion'].includes(eligibility.basis))))
+    )
+      throw Error('Invalid trigger retention request');
+    const age = eligibility?.minAgeMs,
+      clock = eligibility?.clock,
+      basis = eligibility?.basis ?? 'receipt';
+    if (signal?.aborted) throw Error('Trigger retention cancelled');
+    let allowed: boolean;
+    try {
+      allowed = await this.authorize({ ...who }, 'redact', runId, signal);
+    } catch (error) {
+      if (signal?.aborted) throw Error('Trigger retention cancelled');
+      throw error;
+    }
+    if (signal?.aborted) throw Error('Trigger retention cancelled');
+    if (allowed !== true) throw Error('Trigger retention access denied');
+    if (clock) {
+      now = clock();
+      if (!Number.isSafeInteger(now) || now < 0) throw Error('Invalid clock');
+    }
+    if (signal?.aborted) throw Error('Trigger retention cancelled');
+    const { tenantId, agentId } = this.scope;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const row = this.db
+        .prepare(
+          'SELECT r.status,d.run_id AS redacted,t.received_at,c.completed_at FROM agent_trigger_inbox i JOIN agent_runs r ON r.tenant_id=i.tenant_id AND r.agent_id=i.agent_id AND ' +
+            'r.run_id=i.run_id LEFT JOIN agent_trigger_redactions d ON d.tenant_id=i.tenant_id AND d.agent_id=i.agent_id AND d.run_id=i.run_id LEFT JOIN agent_trigger_receipts t ON ' +
+            't.tenant_id=i.tenant_id AND t.agent_id=i.agent_id AND t.run_id=i.run_id LEFT JOIN agent_run_terminal_times c ON c.tenant_id=i.tenant_id AND c.agent_id=i.agent_id AND c.run_id=i.run_id ' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            '' +
+            'WHERE i.tenant_id=? AND i.agent_id=? AND i.run_id=?'
+        )
+        .get(tenantId, agentId, runId);
+      if (!row) throw Error('Trigger not found');
+      if (row.redacted !== null) {
+        this.db.exec('COMMIT');
+        return false;
+      }
+      if (!['succeeded', 'failed', 'cancelled'].includes(String(row.status))) throw Error('Trigger run is not terminal');
+      const timestamp = basis === 'completion' ? row.completed_at : row.received_at;
+      if (age !== undefined && (timestamp === null || !Number.isSafeInteger(Number(timestamp)) || Number(timestamp) < 0 || Number(timestamp) >= now - age)) {
+        this.db.exec('COMMIT');
+        return false;
+      }
+      this.db.prepare("UPDATE agent_trigger_inbox SET payload='null' WHERE tenant_id=? AND agent_id=? AND run_id=?").run(tenantId, agentId, runId);
+      this.db.prepare('INSERT INTO agent_trigger_redactions VALUES (?,?,?,?,?)').run(tenantId, agentId, runId, who.principalId, now);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  async getRedaction(actor: Actor, runId: string): Promise<{ actorId: string; redactedAt: number } | undefined> {
+    const who = this.actor(actor, runId);
+    if ((await this.authorize({ ...who }, 'read', runId)) !== true) throw Error('Trigger retention access denied');
+    const row = this.db.prepare('SELECT actor_id,redacted_at FROM agent_trigger_redactions WHERE tenant_id=? AND agent_id=? AND run_id=?').get(this.scope.tenantId, this.scope.agentId, runId);
+    return row ? { actorId: String(row.actor_id), redactedAt: Number(row.redacted_at) } : undefined;
+  }
+}
+export type { Actor as AgentTriggerRetentionActor, Options as AgentTriggerRetentionOptions };

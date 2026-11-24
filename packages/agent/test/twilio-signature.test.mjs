@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { twilioSignature, validTwilioSignature } from '../dist/twilio-signature.js';
+import { twilioSignature, validTwilioSignature } from '../dist/webhooks/twilio-signature.js';
 
 // Reference values produced by the official Twilio SDK (getExpectedTwilioSignature) before the dependency was removed.
 const vectors = [

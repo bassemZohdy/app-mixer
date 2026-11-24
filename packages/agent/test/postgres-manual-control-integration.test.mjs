@@ -14,15 +14,15 @@ import {
   registerAgentLeaseRecovery,
   registerAgentLeaseRecoveryHistory
 } from '../dist/index.js';
-import { PostgresAgentTriggerFoundation } from '../dist/postgres-trigger-foundation.js';
-import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres-run-lifecycle-foundation.js';
-import { PostgresAgentActionJournalFoundation } from '../dist/postgres-action-journal-foundation.js';
-import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres-token-budget-foundation.js';
-import { PostgresAgentCheckpointerFoundation } from '../dist/postgres-checkpointer-foundation.js';
-import { PostgresAgentApprovalsFoundation } from '../dist/postgres-agent-approvals-foundation.js';
-import { PostgresAgentWorkerFoundation } from '../dist/postgres-worker-foundation.js';
-import { PostgresAgentDispatcherFoundation } from '../dist/postgres-dispatcher-foundation.js';
-import { PostgresAgentLeaseRecoveryHistoryFoundation } from '../dist/postgres-lease-recovery-history-foundation.js';
+import { PostgresAgentTriggerFoundation } from '../dist/postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentActionJournalFoundation } from '../dist/postgres/postgres-action-journal-foundation.js';
+import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres/postgres-token-budget-foundation.js';
+import { PostgresAgentCheckpointerFoundation } from '../dist/postgres/postgres-checkpointer-foundation.js';
+import { PostgresAgentApprovalsFoundation } from '../dist/postgres/postgres-agent-approvals-foundation.js';
+import { PostgresAgentWorkerFoundation } from '../dist/postgres/postgres-worker-foundation.js';
+import { PostgresAgentDispatcherFoundation } from '../dist/postgres/postgres-dispatcher-foundation.js';
+import { PostgresAgentLeaseRecoveryHistoryFoundation } from '../dist/postgres/postgres-lease-recovery-history-foundation.js';
 const transaction = pool => async operation => {
   const client = await pool.connect();
   try {

@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { AgentRunExpiryWorker } from '../dist/index.js';
-import { PostgresAgentExpiryHistoryFoundation } from '../dist/postgres-expiry-history-foundation.js';
-import { PostgresAgentTriggerFoundation } from '../dist/postgres-trigger-foundation.js';
-import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres-run-lifecycle-foundation.js';
-import { PostgresAgentActionJournalFoundation } from '../dist/postgres-action-journal-foundation.js';
-import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres-token-budget-foundation.js';
-import { PostgresAgentApprovalsFoundation } from '../dist/postgres-agent-approvals-foundation.js';
+import { PostgresAgentExpiryHistoryFoundation } from '../dist/postgres/postgres-expiry-history-foundation.js';
+import { PostgresAgentTriggerFoundation } from '../dist/postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../dist/postgres/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentActionJournalFoundation } from '../dist/postgres/postgres-action-journal-foundation.js';
+import { PostgresAgentTokenBudgetFoundation } from '../dist/postgres/postgres-token-budget-foundation.js';
+import { PostgresAgentApprovalsFoundation } from '../dist/postgres/postgres-agent-approvals-foundation.js';
 const transaction = pool => async operation => {
   const client = await pool.connect();
   try {

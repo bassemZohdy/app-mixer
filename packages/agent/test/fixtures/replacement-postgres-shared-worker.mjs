@@ -1,11 +1,11 @@
 import pg from 'pg';
 import { AIMessage } from '@langchain/core/messages';
 import { SqliteAgentDefinitions, createConfiguredAgentRun } from '../../dist/index.js';
-import { PostgresAgentRunLifecycleFoundation } from '../../dist/postgres-run-lifecycle-foundation.js';
-import { PostgresAgentActionJournalFoundation } from '../../dist/postgres-action-journal-foundation.js';
-import { PostgresAgentTokenBudgetFoundation } from '../../dist/postgres-token-budget-foundation.js';
-import { PostgresAgentCheckpointerFoundation } from '../../dist/postgres-checkpointer-foundation.js';
-import { PostgresAgentWorkerFoundation } from '../../dist/postgres-worker-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../../dist/postgres/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentActionJournalFoundation } from '../../dist/postgres/postgres-action-journal-foundation.js';
+import { PostgresAgentTokenBudgetFoundation } from '../../dist/postgres/postgres-token-budget-foundation.js';
+import { PostgresAgentCheckpointerFoundation } from '../../dist/postgres/postgres-checkpointer-foundation.js';
+import { PostgresAgentWorkerFoundation } from '../../dist/postgres/postgres-worker-foundation.js';
 const pool = new pg.Pool({ connectionString: process.env.APP_MIXER_TEST_POSTGRES_URL, options: `-c search_path=${process.env.TEST_SCHEMA}` }),
   scope = { tenantId: 'tenant', agentId: 'agent' },
   runId = process.env.TEST_RUN_ID;

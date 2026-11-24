@@ -1,13 +1,13 @@
 /** Experimental shared-run interface. The host is responsible for identity, policy, database timeouts and reconciliation. */
-import { PostgresAgentTriggerFoundation } from './postgres-trigger-foundation.js';
-import { PostgresAgentRunLifecycleFoundation } from './postgres-run-lifecycle-foundation.js';
-import { PostgresAgentActionJournalFoundation } from './postgres-action-journal-foundation.js';
-import { PostgresAgentTokenBudgetFoundation } from './postgres-token-budget-foundation.js';
-import { PostgresAgentCheckpointerFoundation } from './postgres-checkpointer-foundation.js';
-import { PostgresAgentApprovalsFoundation } from './postgres-agent-approvals-foundation.js';
-import { PostgresAgentSchedulesFoundation } from './postgres-agent-schedules-foundation.js';
-import { PostgresAgentDelegationsFoundation } from './postgres-agent-delegations-foundation.js';
-import { PostgresAgentNoticeDelivery } from './postgres-agent-notice-delivery.js';
+import { PostgresAgentTriggerFoundation } from './postgres/postgres-trigger-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from './postgres/postgres-run-lifecycle-foundation.js';
+import { PostgresAgentActionJournalFoundation } from './postgres/postgres-action-journal-foundation.js';
+import { PostgresAgentTokenBudgetFoundation } from './postgres/postgres-token-budget-foundation.js';
+import { PostgresAgentCheckpointerFoundation } from './postgres/postgres-checkpointer-foundation.js';
+import { PostgresAgentApprovalsFoundation } from './postgres/postgres-agent-approvals-foundation.js';
+import { PostgresAgentSchedulesFoundation } from './postgres/postgres-agent-schedules-foundation.js';
+import { PostgresAgentDelegationsFoundation } from './postgres/postgres-agent-delegations-foundation.js';
+import { PostgresAgentNoticeDelivery } from './postgres/postgres-agent-notice-delivery.js';
 
 type Database = Pick<ConstructorParameters<typeof PostgresAgentTriggerFoundation>[0], 'query' | 'transaction'>;
 /** Provision before starting workers, using one schema provisioner. This creates no run or grant. */
@@ -41,15 +41,15 @@ export {
   PostgresAgentSchedulesFoundation,
   PostgresAgentDelegationsFoundation
 };
-export { PostgresAgentWorkerFoundation } from './postgres-worker-foundation.js';
-export { PostgresAgentDispatcherFoundation } from './postgres-dispatcher-foundation.js';
-export { PostgresAgentWakeupRetentionFoundation } from './postgres-wakeup-retention-foundation.js';
-export { PostgresAgentTriggerRetentionFoundation } from './postgres-trigger-retention-foundation.js';
-export { PostgresAgentNoticesFoundation } from './postgres-agent-notices-foundation.js';
-export { PostgresAgentNoticeDelivery } from './postgres-agent-notice-delivery.js';
-export type { PostgresAgentNoticeDeliveryOptions } from './postgres-agent-notice-delivery.js';
-export { PostgresAgentExpiryHistoryFoundation } from './postgres-expiry-history-foundation.js';
-export { PostgresAgentLeaseRecoveryHistoryFoundation } from './postgres-lease-recovery-history-foundation.js';
-export { PostgresAgentActionRecoveryDiscoveryFoundation, PostgresAgentBudgetRecoveryDiscoveryFoundation } from './postgres-recovery-discovery-foundation.js';
-export { registerSharedAgentRunReconciliation } from './postgres-run-reconciliation-capability.js';
+export { PostgresAgentWorkerFoundation } from './postgres/postgres-worker-foundation.js';
+export { PostgresAgentDispatcherFoundation } from './postgres/postgres-dispatcher-foundation.js';
+export { PostgresAgentWakeupRetentionFoundation } from './postgres/postgres-wakeup-retention-foundation.js';
+export { PostgresAgentTriggerRetentionFoundation } from './postgres/postgres-trigger-retention-foundation.js';
+export { PostgresAgentNoticesFoundation } from './postgres/postgres-agent-notices-foundation.js';
+export { PostgresAgentNoticeDelivery } from './postgres/postgres-agent-notice-delivery.js';
+export type { PostgresAgentNoticeDeliveryOptions } from './postgres/postgres-agent-notice-delivery.js';
+export { PostgresAgentExpiryHistoryFoundation } from './postgres/postgres-expiry-history-foundation.js';
+export { PostgresAgentLeaseRecoveryHistoryFoundation } from './postgres/postgres-lease-recovery-history-foundation.js';
+export { PostgresAgentActionRecoveryDiscoveryFoundation, PostgresAgentBudgetRecoveryDiscoveryFoundation } from './postgres/postgres-recovery-discovery-foundation.js';
+export { registerSharedAgentRunReconciliation } from './postgres/postgres-run-reconciliation-capability.js';
 export type { Database as ExperimentalSharedAgentDatabase };

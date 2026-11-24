@@ -1,0 +1,301 @@
+import { ROOT_CONTEXT, SpanKind, SpanStatusCode, type Tracer, type Span } from '@opentelemetry/api';
+import { parseAgentTraceParent } from './agent-trace-context.js';
+import { SqliteAgentSchedules, type AgentSchedule, type AgentScheduleCursor } from './agent-schedules.js';
+import { PostgresAgentSchedulesFoundation } from '../postgres/postgres-agent-schedules-foundation.js';
+import { PostgresAgentRunLifecycleFoundation } from '../postgres/postgres-run-lifecycle-foundation.js';
+import { SqliteAgentRuns, type AgentRunScope } from './durable-runs.js';
+import { type AgentDefinitionVersion } from '../persistent-definitions.js';
+
+export type AgentScheduleWakeupTarget = { runId: string; revision: number; definitionVersion: number; status: string };
+type Options = {
+  schedules: SqliteAgentSchedules | PostgresAgentSchedulesFoundation;
+  scope: AgentRunScope;
+  definitions: {
+    get: (tenantId: string, agentId: string) => AgentDefinitionVersion | undefined | Promise<AgentDefinitionVersion | undefined>;
+    getWithSignal?: (tenantId: string, agentId: string, signal: AbortSignal) => AgentDefinitionVersion | undefined | Promise<AgentDefinitionVersion | undefined>;
+  };
+  authorize: (schedule: AgentSchedule, definition: AgentDefinitionVersion, signal: AbortSignal) => boolean | Promise<boolean>;
+  maxPending: number;
+  wakeup?: {
+    runs: SqliteAgentRuns | PostgresAgentRunLifecycleFoundation;
+    select: (schedule: AgentSchedule, definition: AgentDefinitionVersion, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
+    authorize: (schedule: AgentSchedule, definition: AgentDefinitionVersion, target: AgentScheduleWakeupTarget, signal: AbortSignal) => boolean | Promise<boolean>;
+  };
+  callbackTimeoutMs?: number;
+  maxPendingCallbacks?: number;
+  maxPerPass: number;
+  pollMs: number;
+  onError: (error: unknown) => void;
+  clock?: () => number;
+  auditActorId?: string;
+  tracing?: { tracer: Tracer; propagateToRun?: boolean };
+};
+/** Host-driven polling for one agent; starts only when explicitly enabled. */
+export class AgentScheduleWorker {
+  private readonly options: Options;
+  private readonly scope: AgentRunScope;
+  private readonly clock: () => number;
+  private readonly auditActorId: string | undefined;
+  private readonly tracer: Tracer | undefined;
+  private readonly propagateToRun: boolean;
+  private active = false;
+  private generation = 0;
+  private pending?: Promise<number>;
+  private timer?: ReturnType<typeof setTimeout>;
+  private cursor?: AgentScheduleCursor;
+  private controller?: AbortController;
+  private callbacksInFlight = 0;
+  constructor(options: Options) {
+    if (!options) throw Error('Invalid schedule worker');
+    options = { ...options };
+    if (
+      (!(options.schedules instanceof SqliteAgentSchedules) && !(options.schedules instanceof PostgresAgentSchedulesFoundation)) ||
+      !options.scope ||
+      typeof options.scope.tenantId !== 'string' ||
+      typeof options.scope.agentId !== 'string' ||
+      !options.definitions ||
+      typeof options.definitions.get !== 'function' ||
+      (options.definitions.getWithSignal !== undefined && typeof options.definitions.getWithSignal !== 'function') ||
+      typeof options.authorize !== 'function' ||
+      !Number.isSafeInteger(options.maxPending) ||
+      options.maxPending < 1 ||
+      options.maxPending > 10000 ||
+      !Number.isSafeInteger(options.maxPerPass) ||
+      options.maxPerPass < 1 ||
+      options.maxPerPass > 100 ||
+      !Number.isSafeInteger(options.pollMs) ||
+      options.pollMs < 100 ||
+      options.pollMs > 3600000 ||
+      typeof options.onError !== 'function' ||
+      (options.clock !== undefined && typeof options.clock !== 'function') ||
+      (options.auditActorId !== undefined && (typeof options.auditActorId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(options.auditActorId))) ||
+      (options.tracing !== undefined &&
+        (!options.tracing ||
+          !options.tracing.tracer ||
+          typeof options.tracing.tracer.startSpan !== 'function' ||
+          (options.tracing.propagateToRun !== undefined && typeof options.tracing.propagateToRun !== 'boolean')))
+    )
+      throw Error('Invalid schedule worker');
+    if (
+      options.wakeup !== undefined &&
+      (!options.wakeup ||
+        !(
+          (options.wakeup.runs instanceof SqliteAgentRuns && options.schedules instanceof SqliteAgentSchedules && options.schedules.sharesRunDatabase(options.wakeup.runs)) ||
+          (options.wakeup.runs instanceof PostgresAgentRunLifecycleFoundation &&
+            options.schedules instanceof PostgresAgentSchedulesFoundation &&
+            options.schedules.sharesRunDatabase(options.wakeup.runs))
+        ) ||
+        typeof options.wakeup.select !== 'function' ||
+        typeof options.wakeup.authorize !== 'function')
+    )
+      throw Error('Invalid schedule worker wakeup');
+    if (
+      (options.callbackTimeoutMs === undefined) !== (options.maxPendingCallbacks === undefined) ||
+      (options.callbackTimeoutMs !== undefined && (!Number.isInteger(options.callbackTimeoutMs) || options.callbackTimeoutMs < 100 || options.callbackTimeoutMs > 30000)) ||
+      (options.maxPendingCallbacks !== undefined && (!Number.isInteger(options.maxPendingCallbacks) || options.maxPendingCallbacks < 1 || options.maxPendingCallbacks > 100))
+    )
+      throw Error('Invalid schedule worker');
+    this.options = { ...options, ...(options.wakeup ? { wakeup: { runs: options.wakeup.runs, select: options.wakeup.select, authorize: options.wakeup.authorize } } : {}) };
+    this.scope = { tenantId: options.scope.tenantId, agentId: options.scope.agentId };
+    this.clock = options.clock ?? Date.now;
+    this.auditActorId = options.auditActorId;
+    this.tracer = options.tracing?.tracer;
+    this.propagateToRun = options.tracing?.propagateToRun === true;
+  }
+  private async callback<T>(fn: (signal: AbortSignal) => T | Promise<T>, parent: AbortSignal): Promise<T> {
+    const { callbackTimeoutMs, maxPendingCallbacks } = this.options;
+    if (callbackTimeoutMs === undefined) return await fn(parent);
+    if (parent.aborted || this.callbacksInFlight >= maxPendingCallbacks!) throw Error('Schedule callback unavailable');
+    const controller = new AbortController(),
+      signal = AbortSignal.any([parent, controller.signal]);
+    this.callbacksInFlight++;
+    const task = Promise.resolve().then(() => {
+      if (signal.aborted) throw Error('Schedule callback unavailable');
+      return fn(signal);
+    });
+    void task.then(
+      () => {
+        this.callbacksInFlight--;
+      },
+      () => {
+        this.callbacksInFlight--;
+      }
+    );
+    let abort = () => {};
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(Error('Schedule callback unavailable'));
+      if (signal.aborted) abort();
+      else signal.addEventListener('abort', abort, { once: true });
+    });
+    const timer = setTimeout(() => controller.abort(), callbackTimeoutMs);
+    try {
+      const result = await Promise.race([task, cancelled]);
+      if (signal.aborted) throw Error('Schedule callback unavailable');
+      return result;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', abort);
+    }
+  }
+  private async pass(keepGoing: () => boolean, signal: AbortSignal): Promise<number> {
+    const { schedules, definitions, authorize, maxPending, maxPerPass } = this.options,
+      now = schedules instanceof PostgresAgentSchedulesFoundation ? 0 : this.clock();
+    let fired = 0;
+    const page = schedules instanceof PostgresAgentSchedulesFoundation ? await schedules.duePage(this.scope, maxPerPass, this.cursor) : schedules.duePage(this.scope, now, maxPerPass, this.cursor),
+      get = () =>
+        this.callback(
+          callbackSignal => (definitions.getWithSignal ? definitions.getWithSignal(this.scope.tenantId, this.scope.agentId, callbackSignal) : definitions.get(this.scope.tenantId, this.scope.agentId)),
+          signal
+        );
+    for (const schedule of page.items) {
+      if (!keepGoing()) return fired;
+      try {
+        const selected = await get();
+        if (!keepGoing() || !selected || !selected.manifest.lifecycle.enabled || selected.manifest.tenantId !== this.scope.tenantId || selected.manifest.agentId !== this.scope.agentId) continue;
+        const definition = structuredClone(selected);
+        if ((await this.callback(callbackSignal => authorize(structuredClone(schedule), structuredClone(definition), callbackSignal), signal)) !== true || !keepGoing()) continue;
+        const latest = await get();
+        if (
+          !keepGoing() ||
+          !latest ||
+          latest.version !== definition.version ||
+          !latest.manifest.lifecycle.enabled ||
+          latest.manifest.tenantId !== this.scope.tenantId ||
+          latest.manifest.agentId !== this.scope.agentId
+        )
+          continue;
+        if ((await this.callback(callbackSignal => authorize(structuredClone(schedule), structuredClone(latest), callbackSignal), signal)) !== true || !keepGoing()) continue;
+        let wakeTarget: AgentScheduleWakeupTarget | undefined;
+        if (this.options.wakeup) {
+          const wakeup = this.options.wakeup,
+            select = () => this.callback(callbackSignal => wakeup.select(structuredClone(schedule), structuredClone(latest), callbackSignal), signal),
+            chosen = await select();
+          if (!keepGoing()) continue;
+          if (chosen !== undefined) {
+            if (typeof chosen !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(chosen)) throw Error('Invalid schedule wakeup selection');
+            const run = await wakeup.runs.get(this.scope, chosen);
+            if (!keepGoing()) continue;
+            if (!run || run.status !== 'paused' || run.definitionVersion !== latest.version) throw Error('Schedule wakeup unavailable');
+            wakeTarget = { runId: run.runId, revision: run.revision, definitionVersion: run.definitionVersion, status: run.status };
+            if ((await this.callback(callbackSignal => wakeup.authorize(structuredClone(schedule), structuredClone(latest), { ...wakeTarget! }, callbackSignal), signal)) !== true || !keepGoing())
+              continue;
+          }
+          const confirmed = await select();
+          if (!keepGoing()) continue;
+          if (confirmed !== chosen) throw Error('Schedule wakeup selection changed');
+          const finalDefinition = await get();
+          if (
+            !keepGoing() ||
+            !finalDefinition ||
+            finalDefinition.version !== latest.version ||
+            !finalDefinition.manifest.lifecycle.enabled ||
+            finalDefinition.manifest.tenantId !== this.scope.tenantId ||
+            finalDefinition.manifest.agentId !== this.scope.agentId
+          )
+            continue;
+          if (
+            wakeTarget &&
+            ((await this.callback(callbackSignal => wakeup.authorize(structuredClone(schedule), structuredClone(finalDefinition), { ...wakeTarget! }, callbackSignal), signal)) !== true ||
+              !keepGoing())
+          )
+            continue;
+          if ((await this.callback(callbackSignal => authorize(structuredClone(schedule), structuredClone(finalDefinition), callbackSignal), signal)) !== true || !keepGoing()) continue;
+        }
+        let span: Span | undefined, parent: string | undefined;
+        try {
+          if (this.tracer) {
+            span = this.tracer.startSpan('agent.schedule.enqueue', { kind: SpanKind.PRODUCER }, ROOT_CONTEXT);
+            if (this.propagateToRun) {
+              const sc = span.spanContext(),
+                candidate = `00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2, '0')}`;
+              if (parseAgentTraceParent(candidate)) parent = candidate;
+            }
+          }
+        } catch {}
+        try {
+          const policy = {
+            definitionVersion: definition.version,
+            maxAttempts: definition.manifest.lifecycle.maxAttempts,
+            runTimeoutMs: definition.manifest.lifecycle.runTimeoutMs,
+            maxPending,
+            ...(wakeTarget ? { wakeup: { runId: wakeTarget.runId, revision: wakeTarget.revision } } : parent ? { traceParent: parent } : {})
+          };
+          if (schedules instanceof PostgresAgentSchedulesFoundation) await schedules.fire(this.scope, schedule.scheduleId, schedule.revision, policy, this.auditActorId, signal);
+          else schedules.fire(this.scope, schedule.scheduleId, schedule.revision, policy, this.clock(), this.auditActorId);
+          if (keepGoing()) fired++;
+        } catch (error) {
+          try {
+            span?.setStatus({ code: SpanStatusCode.ERROR });
+            span?.setAttribute('error.type', 'agent_schedule_enqueue_failed');
+          } catch {}
+          throw error;
+        } finally {
+          try {
+            span?.end();
+          } catch {}
+        }
+      } catch (error) {
+        if (keepGoing() && !(error instanceof Error && error.message === 'Schedule revision conflict'))
+          try {
+            this.options.onError(error);
+          } catch {
+            /* a failing hook must not change the outcome */
+          }
+      } finally {
+        if (keepGoing()) this.cursor = { nextAt: schedule.nextAt, scheduleId: schedule.scheduleId };
+      }
+    }
+    if (keepGoing() && !page.next) delete this.cursor;
+    return fired;
+  }
+  private begin(keepGoing: () => boolean): Promise<number> {
+    const controller = new AbortController();
+    this.controller = controller;
+    const pending = this.pass(() => !controller.signal.aborted && keepGoing(), controller.signal);
+    this.pending = pending;
+    void pending
+      .finally(() => {
+        if (this.pending === pending) delete this.pending;
+        if (this.controller === controller) delete this.controller;
+      })
+      .catch(() => {});
+    return pending;
+  }
+  runOnce(): Promise<number> {
+    if (this.active || this.pending) throw Error('Schedule pass already running');
+    const generation = this.generation;
+    return this.begin(() => this.generation === generation);
+  }
+  start(): void {
+    if (this.active || this.pending) throw Error('Schedule worker already running');
+    this.active = true;
+    const generation = ++this.generation;
+    const loop = () => {
+      if (!this.active || this.generation !== generation) return;
+      const pending = this.begin(() => this.active && this.generation === generation);
+      void pending
+        .catch(error => {
+          try {
+            this.options.onError(error);
+          } catch {}
+        })
+        .finally(() => {
+          if (this.active && this.generation === generation) this.timer = setTimeout(loop, this.options.pollMs);
+        });
+    };
+    loop();
+  }
+  async stop(): Promise<void> {
+    this.active = false;
+    this.generation++;
+    if (this.timer) clearTimeout(this.timer);
+    delete this.timer;
+    this.controller?.abort();
+    const pending = this.pending;
+    if (pending)
+      try {
+        await pending;
+      } catch {}
+  }
+}
+export type { Options as AgentScheduleWorkerOptions };

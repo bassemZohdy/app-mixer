@@ -1,0 +1,123 @@
+import { SqliteAgentRuns, type AgentRunScope, type ExpiredAgentLease } from '../runs/durable-runs.js';
+import { PostgresAgentRunLifecycleFoundation } from '../postgres/postgres-run-lifecycle-foundation.js';
+import { isIdentifier } from '../validation.js';
+import { capabilityWiring, type CapabilityActor, type CapabilityRegistry } from './capability-wiring.js';
+type Actor = CapabilityActor;
+type Registry = CapabilityRegistry;
+type Options = {
+  runs: SqliteAgentRuns | PostgresAgentRunLifecycleFoundation;
+  scope: AgentRunScope;
+  runId: string;
+  operationId: string;
+  path: string;
+  authorize: (actor: Actor, action: 'access' | 'recover', lease: ExpiredAgentLease | null, signal: AbortSignal) => boolean | Promise<boolean>;
+  clock?: () => number;
+  timeoutMs?: number;
+  maxPending?: number;
+};
+const id = isIdentifier;
+function parse(input: unknown): { reference: string; revision: number } | undefined {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    Object.keys(input).length !== 2 ||
+    !Object.hasOwn(input, 'reference') ||
+    !Object.hasOwn(input, 'revision') ||
+    !id((input as { reference?: unknown }).reference) ||
+    !Number.isSafeInteger((input as { revision?: unknown }).revision) ||
+    Number((input as { revision: number }).revision) < 1 ||
+    Number((input as { revision: number }).revision) >= Number.MAX_SAFE_INTEGER
+  )
+    return;
+  return { reference: (input as { reference: string }).reference, revision: (input as { revision: number }).revision };
+}
+/** Expose one host-selected expired lease transition; never retry or reconcile it. */
+export function registerAgentLeaseRecovery(registry: Registry, options: Options): void {
+  if (
+    !registry ||
+    typeof registry.register !== 'function' ||
+    !options ||
+    (!(options.runs instanceof SqliteAgentRuns) && !(options.runs instanceof PostgresAgentRunLifecycleFoundation)) ||
+    !id(options.runId) ||
+    (options.clock !== undefined && typeof options.clock !== 'function')
+  )
+    throw Error('Invalid lease recovery capability');
+  const { runs, runId, operationId, path, authorize, timeoutMs, maxPending } = options,
+    { scope } = capabilityWiring('lease recovery', 'Lease recovery unavailable', registry, options),
+    clock = options.clock ?? Date.now;
+  let pending = 0;
+  const permit = async (actor: Actor, action: 'access' | 'recover', lease: ExpiredAgentLease | null): Promise<boolean> => {
+    const controller = new AbortController(),
+      invoke = () => authorize({ ...actor }, action, lease ? { ...lease } : null, controller.signal);
+    if (timeoutMs === undefined) return (await invoke()) === true;
+    if (pending >= maxPending!) throw Error('Lease recovery unavailable');
+    pending++;
+    const task = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw Error('Lease recovery unavailable');
+      return invoke();
+    });
+    void task.then(
+      () => {
+        pending--;
+      },
+      () => {
+        pending--;
+      }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        task,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(Error('Lease recovery unavailable'));
+          }, timeoutMs);
+        })
+      ]);
+      if (controller.signal.aborted) throw Error('Lease recovery unavailable');
+      return result === true;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+  registry.register(
+    { operationId, method: 'POST', path, summary: 'Mark one expired agent lease uncertain' },
+    {
+      authorize: async actor => actor.tenantId === scope.tenantId && (await permit({ tenantId: actor.tenantId, principalId: actor.principalId }, 'access', null)),
+      validate: input => !!parse(input),
+      execute: async (input, actor) => {
+        const safe = parse(input);
+        if (!safe) throw Error('Invalid capability input');
+        const who = { tenantId: actor.tenantId, principalId: actor.principalId };
+        let lease: ExpiredAgentLease | undefined;
+        if (runs instanceof PostgresAgentRunLifecycleFoundation) lease = await runs.getExpiredLease(scope, runId);
+        else {
+          const run = runs.get(scope, runId),
+            now = clock();
+          if (!Number.isSafeInteger(now) || now < 0) throw Error('Lease recovery unavailable');
+          if (run && !run.archived && run.leaseUntil !== null && run.leaseUntil <= now && ['running', 'pause_requested', 'cancel_requested'].includes(run.status))
+            lease = { runId, revision: run.revision, status: run.status as ExpiredAgentLease['status'], leaseUntil: run.leaseUntil };
+        }
+        if (!lease) throw Error('Lease recovery not eligible');
+        if (lease.revision !== safe.revision) throw Error('Lease recovery stale');
+        if (!(await permit(who, 'access', null)) || !(await permit(who, 'recover', lease))) throw Error('Capability forbidden');
+        try {
+          let recovered;
+          if (runs instanceof PostgresAgentRunLifecycleFoundation) recovered = await runs.recoverExpired(scope, runId, lease.revision, { principalId: who.principalId, reference: safe.reference });
+          else {
+            const observedAt = clock();
+            if (!Number.isSafeInteger(observedAt) || observedAt < 0) throw Error('Lease recovery unavailable');
+            recovered = runs.recoverExpired(scope, runId, lease.revision, observedAt, { principalId: who.principalId, reference: safe.reference });
+          }
+          return { runId, revisedTo: recovered.revision, status: recovered.status };
+        } catch (error) {
+          if (error instanceof Error && ['Run revision conflict', 'Lease is active'].includes(error.message)) throw Error('Lease recovery stale');
+          throw error;
+        }
+      }
+    }
+  );
+}
+export type { Options as AgentLeaseRecoveryCapabilityOptions };

@@ -54,13 +54,13 @@ test('the entries re-export the same bindings as the root, without overlap, and 
       'configured-runtime',
       'openai-capability-priced-model',
       'openai-priced-cost-model',
-      'postgres-checkpointer-foundation',
+      'postgres/postgres-checkpointer-foundation',
       'priced-cost-model',
       'shared-run-experimental',
-      'sqlite-checkpointer',
+      'runs/sqlite-checkpointer',
       'tool-model',
       'transport'
-    ].map(name => import(`../dist/${name}.js`))
+    ].map(path => import(`../dist/${path}.js`))
   );
   // Modules that import the model, graph or AG-UI packages (checked by the first test through the import graph of the built files).
   // These three are declared in the root module itself and need the model and graph packages.

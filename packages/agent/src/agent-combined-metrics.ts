@@ -1,4 +1,4 @@
-import type { AgentRunMetricsActor } from './agent-run-metrics.js';
+import type { AgentRunMetricsActor } from './runs/agent-run-metrics.js';
 import { isIdentifier } from './validation.js';
 
 type Source = { render: (actor: AgentRunMetricsActor) => string | Promise<string>; renderWithSignal?: (actor: AgentRunMetricsActor, signal: AbortSignal) => string | Promise<string> };

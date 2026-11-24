@@ -25,11 +25,12 @@ test('agent refusals carry a code and map to one status; documented legacy messa
 
 test('every AgentError thrown in the agent package uses a code that maps to a status', () => {
   const dir = fileURLToPath(new URL('../src/', import.meta.url));
+  const walk = folder => readdirSync(folder, { withFileTypes: true }).flatMap(entry => (entry.isDirectory() ? walk(join(folder, entry.name)) : [join(folder, entry.name)]));
   let sites = 0;
-  for (const name of readdirSync(dir).filter(file => file.endsWith('.ts')))
-    for (const match of readFileSync(join(dir, name), 'utf8').matchAll(/new AgentError\('([a-z_]+)'/g)) {
+  for (const path of walk(dir).filter(file => file.endsWith('.ts')))
+    for (const match of readFileSync(path, 'utf8').matchAll(/new AgentError\('([a-z_]+)'/g)) {
       sites++;
-      assert.notEqual(agentErrorStatus(new AgentError(match[1], 'x')), undefined, `${name}: unknown code ${match[1]}`);
+      assert.notEqual(agentErrorStatus(new AgentError(match[1], 'x')), undefined, `${path}: unknown code ${match[1]}`);
     }
   assert.ok(sites >= 128, 'the mapped refusals are thrown as AgentError (' + sites + ' sites)');
 });

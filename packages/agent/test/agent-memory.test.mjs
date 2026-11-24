@@ -482,8 +482,8 @@ test('SQLite erasure request fence survives reopening and rolls back with audit'
 });
 
 test('SQL literals for index predicates accept only plain identifiers and never an unescaped quote', async () => {
-  const { sqlLiteral } = await import('../dist/postgres-agent-memory.js');
-  const { validMemoryId } = await import('../dist/agent-memory.js');
+  const { sqlLiteral } = await import('../dist/postgres/postgres-agent-memory.js');
+  const { validMemoryId } = await import('../dist/memory/agent-memory.js');
   assert.equal(sqlLiteral('tenant-1'), "'tenant-1'");
   assert.equal(sqlLiteral('user'), "'user'");
   assert.equal(sqlLiteral('model:v1.2/a@b_c'), "'model:v1.2/a@b_c'");
