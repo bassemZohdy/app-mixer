@@ -30,6 +30,19 @@ For live tool and provider approval, a host may pass `authorizeExtension(actor, 
 These are asynchronous checks, not a transaction with the extension's side effects: approval can change after the final check, and the implementation or downstream service must enforce any stronger commit-time policy. They do not revoke a component already delivered to a browser or native app. Hosts still need authenticated policy storage, update propagation, cache control and runtime replacement for component changes.
 
 
+## Installing a third-party package
+
+`packages/cli/test/third-party-extension.test.mjs` runs the whole lifecycle with a package built outside this repository. Each step is reported as a test diagnostic, so the test output is the transcript.
+
+1. **Build.** A vendor package, `acme-chart-extension`, with its own `manifest.json`, a web component and a tool, is written to a temporary directory and packed with `npm pack`.
+2. **Install.** A generated application installs the tarball with `npm install --offline --ignore-scripts`. Its host-owned `extensions.mjs` imports the component by package name.
+3. **Approve.** The host computes the tarball's SHA-256 digest, adds it to the manifest it trusts, and pins it in the approval. Registering with the tarball bytes succeeds; different bytes are refused.
+4. **Publish.** An application that references the component and the tool is published through the publication guard.
+5. **Use.** The generated workspace renders the component from the installed package, and its validator rejects bad properties. The tool runs through `createExtensionRuntime` with a live `authorizeExtension` check and capability audit.
+6. **Revoke.** After revocation, the next tool call is refused. A host without the approval can neither register the package nor publish an application that uses it.
+
+The vendor's manifest cannot carry a digest of the package that contains it. The host supplies the digest of the bytes it installed. Generated-app properties for extension components must be scalars.
+
 ## Shared operation approvals
 
 `PostgresExtensionApprovals` provides an optional shared approval source for declared tool and provider invocations. The host supplies a PostgreSQL primary query function, a clock, and an `authorize(actor, action, applicationScope, reference, operation)` callback. Call `initialize()` with a migration identity. Approvals are bound to tenant, application, exact extension ID/version/scope, and declared operation kind/name. `decide` creates or changes one approval using `expectedRevision` (0 for a new record) and an explicit expiry; a revocation uses `allowed: false` and `expiresAt: 0`. Successful changes append an actor-attributed audit event in the same database statement. Stale decisions fail rather than overwriting another administrator's decision.
@@ -113,7 +126,19 @@ For a multi-package preflight, use `app-mixer extension-check-set <set.json> <ho
 Optionally add `allowedExtensions` to the set, mapping each trusted key ID to a nonempty list of exact `{ "id", "version", "scope" }` references. Every artifact must be allowed for its signing key, every configured key must have a list, and the same public key cannot appear under multiple IDs when allowlists are enabled. The core signature verifier enforces this policy before compatibility checks. Omitting `allowedExtensions` trusts every configured key for any host-approved extension. Treat the set, host configuration, keys, paths and requirements as trusted operator input. It is a point-in-time check: registration, policy rechecks and implementation provenance remain the host's responsibility.
 
 The [status badge example](../examples/extensions/status-badge/README.md) demonstrates a versioned web component, publisher signing, a pinned approval, guarded publication, an authorized and audited tool, and generated-workspace rendering in one executable test.
-The test fails if a node caches approvals for half a second, or if a database error counts as allowed. These figures come from one machine. Production latency depends on the primary, network and pool sizing, so the host should repeat the measurement in its target environment and alert on approval-check errors.
+
+## Shared approvals under load and during an outage
+
+`PostgresExtensionApprovals` has no cache: every check reads the primary. A revocation therefore applies to every check that starts after it commits, on every node. A check already in flight can still return its earlier answer. A check that cannot reach the database rejects, so the invocation is refused rather than allowed.
+
+`packages/core/test/postgres-extension-approval-operations.test.mjs` (run in the PostgreSQL CI job) measures this. Two nodes, each with its own pool, run 16 concurrent checks continuously while an administrator revokes through a third pool; the test then cuts one node's connection with a TCP proxy for 1.5 seconds. Two runs, each on one Windows machine with PostgreSQL 16 in Docker:
+
+| Run | Checks per second before revoking | Read latency | Checks that started after the commit | In-flight checks allowed after the commit | During the outage |
+| --- | --- | --- | --- | --- | --- |
+| 2026-11-07 | about 3,700 | p50 6 ms, p99 19 ms | 6,400, none allowed | 2, up to 1.4 ms after the commit; both nodes saw the first denial within 3 ms | about 3,500 checks on the cut node, every one rejected or denied, none allowed; a revocation made through the other node applied to the first check that succeeded after the database returned, 17 ms later |
+| 2026-11-26 | 2,755 | p50 7.6 ms, p99 24.7 ms, max 140.5 ms | 5,242, none allowed | 4, up to 3.1 ms after the commit; the first denial 3.7 ms after the commit | 2,286 checks in a 1,514 ms outage, 2,278 rejected and none allowed; the first successful check 16 ms after the database returned, denied by the revocation made during the outage |
+
+A decision sent through the lost connection fails without writing anything: the revision and the history show only the decisions that reached the primary. The test fails if a node caches approvals for half a second, or if a database error counts as allowed. These figures come from two machines. Production latency depends on the primary, network and pool sizing, so the host should repeat the measurement in its target environment and alert on approval-check errors.
 
 ## How well the tests pin the shared approval store
 
