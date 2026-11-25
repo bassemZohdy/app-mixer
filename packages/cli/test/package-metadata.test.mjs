@@ -48,7 +48,7 @@ test('npm pack contains the built output and templates but no sources or tests',
 });
 
 // TASK-002.1.6: one Node floor everywhere, and the dependency generations the suite is verified with.
-test('TASK-002.1.6 the Node floor is 22.22.2 in engines, README, CONTRIBUTING, the CI matrix and every Docker base image', () => {
+test('TASK-002.1.6 the Node floor is 22.22.2 in engines, README, CONTRIBUTING, the CI matrix and no older Docker base image', () => {
   const text = path => readFileSync(join(root, path), 'utf8').replaceAll('\r\n', '\n'),
     floor = '22.22.2';
   assert.equal(JSON.parse(text('package.json')).engines.node, '>=' + floor);
@@ -61,7 +61,12 @@ test('TASK-002.1.6 the Node floor is 22.22.2 in engines, README, CONTRIBUTING, t
       .split('\n')
       .filter(line => line.startsWith('FROM node:'));
     assert.ok(bases.length > 0, file + ' has a Node base image');
-    for (const line of bases) assert.ok(line.startsWith('FROM node:' + floor + '-bookworm-slim'), file + ': ' + line);
+    for (const line of bases) {
+      const version = /^FROM node:(\d+\.\d+\.\d+)-bookworm-slim@sha256:[a-f0-9]{64}( AS \w+)?$/.exec(line)?.[1];
+      assert.ok(version, file + ': ' + line);
+      // A security rebuild may run a newer patch than the floor; it must never be older.
+      assert.ok(version.localeCompare(floor, undefined, { numeric: true }) >= 0, file + ' base image is at least ' + floor + ': ' + line);
+    }
   }
 });
 
