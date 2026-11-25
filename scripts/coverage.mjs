@@ -37,6 +37,8 @@ const report = join(directory, 'coverage.lcov');
 const coverageFlags = [
   '--test',
   '--experimental-test-coverage',
+  // Node 22 counts the test files themselves; Node 24 does not. Excluding them keeps the figure the same on both.
+  '--test-coverage-exclude=packages/*/test/**',
   `--test-concurrency=${concurrency}`,
   '--test-reporter=lcov',
   `--test-reporter-destination=${report}`,
