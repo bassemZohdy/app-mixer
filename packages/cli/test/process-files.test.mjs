@@ -272,6 +272,25 @@ test('TASK-002.7.2 the Data Plane image installs only its workspaces, has a heal
   assert.match(workflow, /test "\$size" -le \d+/);
 });
 
+test('FEAT-018 the Data Plane runtime image carries none of the package managers the base image ships', () => {
+  // Node 22 ships npm 10, whose bundled packages carry HIGH vulnerabilities the scan refuses; the runtime only executes node.
+  const lines = read('Dockerfile.data-plane').replaceAll('\r\n', '\n').split('\n');
+  const runtimeStage = lines.slice(lines.findLastIndex(line => /^FROM /.test(line))).join('\n');
+  const removal = /^RUN rm -rf ([^\n]*(?:\\\n[^\n]*)*)/m.exec(runtimeStage)?.[1];
+  assert.ok(removal, 'the runtime stage deletes files');
+  for (const path of [
+    '/usr/local/lib/node_modules/npm',
+    '/usr/local/lib/node_modules/corepack',
+    '/opt/yarn',
+    '/usr/local/bin/npm',
+    '/usr/local/bin/npx',
+    '/usr/local/bin/corepack',
+    '/usr/local/bin/yarn'
+  ]) {
+    assert.ok(removal.includes(path), 'removes ' + path);
+  }
+});
+
 test('FIX-003 every Dockerfile builds from the same Node base image, newer than 22.13.0 and pinned by digest', () => {
   const dockerfiles = ['Dockerfile.data-plane', 'Dockerfile.local', 'deploy/kubernetes/test-support/agent-recovery/Dockerfile'],
     images = new Set();
