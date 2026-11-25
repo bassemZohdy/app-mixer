@@ -12,6 +12,7 @@ const worker = fileURLToPath(new URL('./fixtures/open-store-worker.mjs', import.
 const start = path => {
   const child = fork(worker, [path], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
   child.output = '';
+  child.exited = new Promise(resolve => child.once('exit', resolve));
   child.stderr.on('data', chunk => (child.output += chunk));
   child.report = new Promise(resolve => {
     child.loaded = new Promise(ready =>
@@ -35,7 +36,15 @@ test('processes opening the same new store at the same moment all succeed', { ti
       children.forEach(child => child.send('go'));
       for (const result of await Promise.all(children.map(child => child.report))) if (result.type !== 'opened') failures.push(`round ${round}: ${result.message}`);
     } finally {
-      for (const child of children) if (child.exitCode === null) child.kill('SIGKILL');
+      // A worker exits itself right after it reports. Wait for that instead of killing it: SIGKILL during the exit leaves a
+      // truncated V8 coverage file, and node --experimental-test-coverage then fails the whole run. Kill only a worker that hangs.
+      await Promise.all(
+        children.map(async child => {
+          const hung = setTimeout(() => child.kill('SIGKILL'), 10000);
+          await child.exited;
+          clearTimeout(hung);
+        })
+      );
       rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   }
