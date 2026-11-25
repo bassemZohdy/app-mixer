@@ -56,17 +56,33 @@ test('capability upload deadline releases capacity even while a client slowly se
         CAPABILITY_UPLOAD_TIMEOUT_MS: '500'
       });
     child = app.child;
-    const slow = new Promise((resolve, reject) => {
-      upload = request(app.url + '/api/capabilities/example', { method: 'POST', headers: { origin: app.url, 'content-type': 'application/json' } }, res => {
+    const headers = { origin: app.url, 'content-type': 'application/json' };
+    // A client that is still writing when the server closes the timed-out upload can be reset before it reads the 408 (Windows
+    // drops received data on a reset), so the outcomes accepted here are the 408 or a closed connection, no earlier than the
+    // deadline; the status itself is asserted below with a client that has stopped sending.
+    const started = Date.now();
+    const outcome = await new Promise(resolve => {
+      upload = request(app.url + '/api/capabilities/example', { method: 'POST', headers }, res => {
         res.resume();
-        res.on('end', () => resolve(res.statusCode));
+        res.on('end', () => resolve({ status: res.statusCode }));
       });
-      upload.on('error', error => reject(new Error('Slow upload failed', { cause: error })));
+      upload.on('error', error => resolve({ error }));
       upload.write('{');
       drip = setInterval(() => upload.write(' '), 25);
     });
-    assert.equal(await slow, 408);
     clearInterval(drip);
+    assert.ok(Date.now() - started >= 450, 'the upload ended no earlier than the deadline');
+    if (outcome.status !== undefined) assert.equal(outcome.status, 408);
+    else assert.match(String(outcome.error?.code ?? outcome.error?.message), /^(ECONNRESET|EPIPE|socket hang up)$/);
+    const stopped = new Promise((resolve, reject) => {
+      const req = request(app.url + '/api/capabilities/example', { method: 'POST', headers }, res => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      });
+      req.on('error', error => reject(new Error('Stopped upload failed', { cause: error })));
+      req.write('{');
+    });
+    assert.equal(await stopped, 408);
     assert.equal(calls, 0);
     const call = body =>
       fetch(app.url + '/api/capabilities/example', { method: 'POST', headers: { origin: app.url, 'content-type': 'application/json' }, body }).catch(error => {
