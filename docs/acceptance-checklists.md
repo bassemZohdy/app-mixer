@@ -58,7 +58,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** run registry, lease claim, renewal and fencing, expiry, pause, resume and cancel, process-kill lease recovery, PostgreSQL run slots.
 - **Still to prove:**
   - [ ] Production scheduling of workers.
-  - [ ] A shared (non-SQLite) run registry.
+  - [x] A shared (non-SQLite) run registry. `PostgresAgentRuns` keeps the SQLite registry's lifecycle, limits and lease fencing on PostgreSQL, and `PostgresRunSupervisor` schedules workers on it: two nodes recover the runs of a killed node exactly once with no duplicated external effect, and claims, lease fencing and recovery around a commit are tested on the shared store ([durable-agent-runs.md](durable-agent-runs.md#scheduling-workers-on-the-shared-registry); `postgres-run-nodes.test.mjs`, `postgres-run-lifecycle-foundation.test.mjs`).
   - [ ] Safe replay of external effects after recovery against a real provider.
   - [ ] Production coordination between nodes, including node failure.
 - **Evidence:** a node-failure test report showing runs recovered exactly once and no duplicated external effect.
@@ -110,7 +110,6 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Production scheduling of the poller.
   - [ ] Comprehensive rollback protection across all stores.
-  - [ ] Disconnected replication.
   - [ ] Comprehensive rollback protection across all stores. The connector's promotion floor can now be anchored outside the target database; other stores still rely on their own database's history. A restore test now measures the gap: restoring an older backup re-activates revoked tokens, lowers the release floor, re-grants revoked approvals and rewinds the audit log without detection ([kubernetes-data-plane.md](kubernetes-data-plane.md#restoring-an-older-backup)). Closing it needs an anchor outside each database, which is not built.
   - [x] Disconnected replication. Signed, version-bound promotion documents carried as files apply on a target with no network in order exactly once. Replayed, older, altered, relabelled, foreign or untrusted documents are refused, and a target restored behind its host-held floor is refused ([remote-control-connector.md](remote-control-connector.md#disconnected-replication)).
   - [ ] Production identity for source and target.
@@ -121,7 +120,6 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Production identity provisioning and certificate operations.
   - [ ] Independent rollback protection.
-  - [ ] Broader admission enforcement beyond the example policy.
   - [ ] Independent rollback protection. Measured, not solved: see P3-03 and the restore test.
   - [ ] High availability of the revocation and release-floor stores. Both stores have a local failover drill on a synchronous standby (see P3-01): the revocation and the release floor survive promotion. Automatic failover and a production cluster do not.
   - [ ] Independent rollback protection. Measured, and solved only for the release floor as a library option (see P3-03 and the restore test).
@@ -147,7 +145,6 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** concurrency and daily-run limits, token and cost reservation ledger with uncertain-call reconciliation, lifecycle history, authorized gauges, cross-process reservation race test.
 - **Still to prove:**
   - [ ] Provider-specific enforcement of limits on each model provider used.
-  - [ ] Production-wide cost controls across nodes.
   - [ ] Provider-specific enforcement of limits on each model provider used. For OpenAI-compatible providers, `createOpenAILimitedToolModel` sends an output cap, refuses oversize prompts before dispatch, disables retries and uses the provider's reported usage; a real model server stopped at the cap and its reported usage added up ([durable-agent-runs.md](durable-agent-runs.md#optional-local-model-token-budget)). Still to do: the provider(s) the product will use in production, and any non-OpenAI-compatible provider.
   - [x] Production-wide cost controls across nodes. `PostgresAgentCostBudget` caps an agent's daily spend across every run and node sharing one PostgreSQL primary. Four processes with 16 concurrent callers admit exactly the budget in every one of 31 rounds, and a provider overrun stops all nodes ([durable-agent-runs.md](durable-agent-runs.md#shared-cost-budget-across-nodes)).
   - [ ] Production trace propagation and retention.
@@ -158,8 +155,6 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** process-kill tests for actions, token reservations, schedules, run leases, approvals, definitions, delegations, publication, the offline queue and staged submissions; PostgreSQL memory, definition and promotion kill tests; kind pod-deletion tests.
 - **Still to prove:**
   - [ ] Production stores (not local SQLite or single-node kind).
-  - [ ] Real provider contracts under crash.
-  - [ ] Node failure and production pod recovery.
   - [ ] Production stores (not local SQLite or single-node kind). The PostgreSQL suites (the same 23 files as the main CI job, 65 tests in CI) pass on PostgreSQL 14, 15, 16 and 17 with pgvector 0.8.7 (`postgres-versions.yml`, weekly); managed services and other engines are untested. The unit tests (993, 61 of them opt-in and skipped) and the same PostgreSQL suites also pass on native Linux arm64 runners (`arm64.yml`, weekly); a real arm64 node pool is untested. A local PostgreSQL primary and standby (not a managed service) already survive a primary kill under load; see the node-failure item.
   - [x] Real provider contracts under crash. Staged submissions and journaled actions are killed or lose responses against a real S3-compatible provider (SeaweedFS, signed requests), and the provider passes the idempotency contract check ([agent-action-journal.md](agent-action-journal.md#crash-recovery-against-a-real-provider), [business-data.md](business-data.md)).
   - [ ] Node failure and production pod recovery. Locally: survivor processes recover workers killed mid-dispatch on the shared PostgreSQL run registry exactly once, and a kind Deployment recovers a crashed worker pod with no duplicated effect ([durable-agent-runs.md](durable-agent-runs.md#scheduling-workers-on-the-shared-registry)). A kind cluster with two worker nodes also loses a whole node (container killed) while a worker holds runs: the Deployment replaces the pod, the surviving worker recovers the runs and every effect is applied once ([durable-agent-runs.md](durable-agent-runs.md)). A worker frozen with SIGSTOP past its lease, taken over and then resumed also dispatches and completes nothing (`postgres-run-nodes.test.mjs`). The PostgreSQL primary is also killed under a running two-worker workload and a synchronous standby promoted; all runs finish with every effect applied once (`postgres-run-failover.test.mjs`). Still to do: take down a node in production, and a real network partition between a node and the database.
