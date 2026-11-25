@@ -34,7 +34,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
   - [ ] Offline provisioning of a device that has never been online.
   - [ ] Mobile storage on iOS and Android, including eviction and backup/restore.
   - [ ] Rollback protection for the offline stores that lack it, and detection of selective tampering.
-  - [ ] Migration of clients older than the fixed-version IndexedDB fence.
+  - [x] Migration of clients older than the fixed-version IndexedDB fence. Compiled builds of the first and last IndexedDB version-1 clients and the last version-2 client write pending, uncertain and conflicted items and a cached publication; the current client then opens the same database while the legacy tab is still connected, closes that connection, keeps every item with its state, version and keys, resumes and deduplicates against the legacy data, rotates the migrated partition's key, and leaves the legacy client unable to reopen the upgraded database ([offline-queue.md](offline-queue.md#data-written-by-older-clients); `offline-legacy-clients.test.mjs`, in the default suite).
   - [ ] Production identity for shared request keys.
 - **Evidence:** device recordings or logs for each scenario and a migration test against a retained legacy client build.
 
@@ -51,7 +51,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Verified locally:** manifest validation, immutable tenant-scoped versions, optimistic concurrency, PostgreSQL store with audit and quotas, process-kill tests.
 - **Still to prove:**
   - [ ] Production identity for administrators and service principals.
-  - [ ] Distributed run-quota enforcement across nodes.
+  - [x] Distributed run-quota enforcement across nodes. `PostgresAgentRunSlots` enforces `maxConcurrentRuns` and `maxRunsPerDay` on one PostgreSQL primary: two separate processes with their own pools, released at the same instant over 20 rounds, admit exactly 5 of 30 starts against `maxConcurrentRuns` 5 and exactly 7 of 30 against `maxRunsPerDay` 7 in every round, and the slot and start tables record exactly that ([durable-agent-runs.md](durable-agent-runs.md#shared-run-slots); `postgres-run-quota-nodes.test.mjs`, run in the PostgreSQL CI job).
 - **Evidence:** a multi-node quota test that exceeds the limit from two nodes simultaneously and a record that exactly the limit was admitted.
 
 ### P2-07 Lifecycle manager and durable run registry
