@@ -45,6 +45,17 @@ class Element {
 const doc = { createElement: tag => new Element(tag, doc) };
 const domTree = node => {
   if (node.tagName === 'span' && !node.children.length && !node.textContent) return undefined;
+  // Progress renders as a label wrapping its text and a progress element; the value attribute is absent while the bar is indeterminate.
+  if (node.tagName === 'label' && node.children[1]?.tagName === 'progress') {
+    const bar = node.children[1];
+    return {
+      kind: 'Progress',
+      label: node.children[0].textContent,
+      value: bar.attributes.value === undefined ? null : Number(bar.attributes.value),
+      max: typeof bar.max === 'number' ? bar.max : Number(bar.attributes.max ?? 100),
+      children: []
+    };
+  }
   const kind = node.tagName === 'section' ? 'Card' : node.tagName === 'div' ? (node.style.flexDirection === 'row' ? 'Row' : 'Column') : 'Text';
   return {
     kind,
@@ -60,6 +71,7 @@ const nativeTree = node =>
     : {
         kind: node.kind,
         ...(node.kind === 'Text' ? { text: node.text } : {}),
+        ...(node.kind === 'Progress' ? { label: node.label, value: node.progress ?? null, max: node.max ?? 100 } : {}),
         ...(node.kind === 'Row' || node.kind === 'Column' ? { justify: node.justify ? styleValues[node.justify] : null, align: node.align ? styleValues[node.align] : null } : {}),
         children: node.children.map(nativeTree).filter(Boolean)
       };

@@ -11,7 +11,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 - **Still to prove:**
   - [ ] Broader React Native device tests on Android and iOS beyond the current nested-binding, rejection and bound-field-action cases.
   - [ ] Flutter exact layout dimensions, typography and accessibility parity against the web reference, measured on devices.
-  - [ ] Every catalog component and behavior present in the web catalog has a fixture exercised on all four adapters.
+  - [ ] Every catalog component and behavior present in the web catalog has a fixture exercised on all four adapters. Every catalog component is now in the shared fixtures that web, React Native and Flutter run (`Progress`, the last named gap, joined `layout.json` on 2026-11-26 and `packages/web/test/catalog-fixture-coverage.test.mjs` fails for an unlisted gap); the Angular DOM bridge hosts the web renderer but runs none of the shared fixtures, which keeps this box open (TASK-049).
 - **Evidence:** CI run URLs per platform and a parity table listing each catalog component against each adapter.
 
 ### P2-02 Extension SDK and compatibility manifests

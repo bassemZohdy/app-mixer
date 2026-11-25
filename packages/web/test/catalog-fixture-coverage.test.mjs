@@ -2,15 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 
-// Components that the shared Flutter/native fixtures do not cover yet, with the reason.
+// Components that the shared Flutter/native fixtures do not cover yet, with the reason. Empty since Progress joined layout.json.
 // The test fails when a listed component appears in a fixture (remove it here) and when a component is missing without being listed.
-const KNOWN_GAPS = {
-  Progress: [
-    'layout.json is compared against domTree/nativeTree (packages/native/test/parity.test.mjs) and tree() (adapters/flutter/test/renderer_test.dart);',
-    'bindings.json compares the root text. Neither helper models Progress, and the Flutter tests cannot be run here.',
-    'Flutter covers Progress in adapters/flutter/test/parity_scenario.dart.'
-  ].join(' ')
-};
+const KNOWN_GAPS = {};
 
 const fixturesUrl = new URL('../../../adapters/flutter/test/fixtures/', import.meta.url);
 const readJson = async url => JSON.parse(await readFile(url, 'utf8'));

@@ -216,6 +216,7 @@ void main() {
     Map<String,dynamic> tree(NativeNode node) => {
       'kind':node.kind,
       if(node.kind=='Text') 'text':node.text,
+      if(node.kind=='Progress') ...{'label':node.label,'value':node.progress,'max':node.max ?? 100.0},
       if(node.kind=='Row'||node.kind=='Column') ...{'justify':styles[node.justify],'align':styles[node.align]},
       'children':node.children.map(tree).toList()
     };

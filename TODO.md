@@ -10,14 +10,15 @@
 - [ ] **TASK-024** · P2 · mid · Close the adapter and parity evidence gaps (legacy P2-01)
   - Done when: every Still-to-prove box of P2-01 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - In repo: TASK-042 (`Progress` is the one named gap in packages/web/test/catalog-fixture-coverage.test.mjs)
+  - In repo: done for the fixtures that web, React Native and Flutter share (`Progress` joined `layout.json`, TASK-042); the Angular DOM bridge runs none of the shared fixtures (TASK-049)
   - Blocked on: Android and iOS devices for React Native tests beyond the nested-binding, rejection and bound-field-action cases; devices for Flutter layout, typography and accessibility parity against the web reference
-  - State: next: TASK-042; the two device boxes wait for the devices
+  - State: next: TASK-049; the two device boxes wait for the devices
 
 - [ ] **TASK-025** · P2 · mid · Close the extension SDK and compatibility manifest evidence gaps (legacy P2-02)
   - Done when: every Still-to-prove box of P2-02 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - Blocked on: the production environment; revocation latency under load and the behaviour during a database outage are measured locally and in CI (two nodes, 32 concurrent checks, the failover drill), the box needs the same measurement in production
+  - Checked with evidence: the full SDK integration with a third-party package built outside the repository (third-party-extension.test.mjs, ported from the hardening branch on 2026-11-26; 1 of 2 boxes)
+  - Blocked on: the production environment; revocation latency under load and the behaviour during a database outage are measured locally and in CI (two nodes, 32 concurrent checks, the failover drill; postgres-extension-approval-operations.test.mjs), the box needs the same measurement in production
   - State: next: measure in production
 
 - [ ] **TASK-026** · P2 · mid · Close the internal data provider and staged transaction evidence gaps (legacy P2-03)
@@ -125,14 +126,9 @@
 - [ ] **TASK-041** · P2 · mid · Close the durable-store portability and tenant-isolation acceptance evidence gaps (legacy P3-08)
   - Done when: every Still-to-prove box of P3-08 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - Checked with evidence: real provider contracts under crash (1 of 4 boxes); weekly: PostgreSQL 14 to 17 with pgvector, Linux arm64
+  - Checked with evidence: real provider contracts under crash (staged-s3-provider.test.mjs and action-s3-provider-crash.test.mjs against SeaweedFS, ported from the hardening branch on 2026-11-26; 1 of 4 boxes); weekly: PostgreSQL 14 to 17 with pgvector, Linux arm64
   - Blocked on: production; managed stores, a node taken down in production, a real network partition between a node and the database, and an arm64 node pool
   - State: next: the production stores
-
-- [ ] **TASK-042** · P2 · small · Close the last named adapter gap: `Progress` in the shared fixtures and the three tree helpers
-  - Done when: `KNOWN_GAPS` in packages/web/test/catalog-fixture-coverage.test.mjs is empty and the test still fails for a listed component; `Progress` is in a fixture under adapters/flutter/test/fixtures and modelled by `domTree` and `nativeTree` (packages/native/test/parity.test.mjs) and by the Flutter `tree()` helper (adapters/flutter/test/renderer_test.dart); `node --test packages/web/test/catalog-fixture-coverage.test.mjs packages/native/test/parity.test.mjs` and `flutter test` in adapters/flutter pass; the Flutter adapter workflow is green
-  - Links: Ref: docs/acceptance-checklists.md#p2-01-adapters-and-parity · From: TASK-024 · Lane: main
-  - State: next: teach the three helpers to render a determinate and an indeterminate progress node, then add the fixture
 
 - [ ] **TASK-043** · P2 · mid · JSON Schema form features the editor rejects: list each keyword with a decision, then implement the accepted ones
   - Done when: a section of docs/business-data.md lists every JSON Schema keyword the form editor rejects today with keep, implement or refuse and the reason; each implemented keyword has a test under packages/core/test and the editor template (packages/cli/templates/data-editor.mjs) renders it; the P2-03 box in docs/acceptance-checklists.md cites the section
@@ -158,3 +154,8 @@
   - Done when: every PostgreSQL store under packages/agent/src/postgres that records security or money state (definitions, runs, the action journal, memory, approvals, delegations and the cost budget) accepts an anchor as PostgresJwtRevocations and PostgresPublicationReleaseRegistry do (docs/kubernetes-data-plane.md, Anchors), or its documentation names why it cannot; packages/core/test/postgres-restore-rollback.test.mjs covers each one and shows a restore refused until the anchor is reconciled; the sentence in docs/kubernetes-data-plane.md#restoring-an-older-backup that only the connector's promotion floor can be anchored is brought in line with the anchors the stores accept; the P3-03 and P3-04 rollback boxes cite the test
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
+
+- [ ] **TASK-049** · P2 · mid · Run the shared layout fixture through the Angular DOM bridge
+  - Done when: `.github/scripts/angular-smoke.mjs` feeds every step of adapters/flutter/test/fixtures/layout.json to `A2UIComponent` in TestBed and checks the rendered DOM tree, normalised like `domTree` in packages/native/test/parity.test.mjs, against each step's `tree`; the `Angular AOT and lifecycle smoke test` CI step stays green; the P2-01 box in docs/acceptance-checklists.md cites it
+  - Links: Ref: docs/angular-adapter.md · From: TASK-024 · Lane: main
+  - State: next: share the DOM normalisation with parity.test.mjs instead of copying it

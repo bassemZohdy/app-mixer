@@ -209,5 +209,245 @@
         }
       ]
     }
+  },
+  {
+    "message": {
+      "version": "v0.9.1",
+      "updateDataModel": {
+        "surfaceId": "main",
+        "value": {
+          "upload": {
+            "percent": 40
+          }
+        }
+      }
+    },
+    "tree": {
+      "kind": "Column",
+      "justify": null,
+      "align": "stretch",
+      "children": [
+        {
+          "kind": "Text",
+          "text": "Hello",
+          "children": []
+        },
+        {
+          "kind": "Card",
+          "children": [
+            {
+              "kind": "Row",
+              "justify": "space-between",
+              "align": null,
+              "children": [
+                {
+                  "kind": "Text",
+                  "text": "One",
+                  "children": []
+                },
+                {
+                  "kind": "Text",
+                  "text": "Changed",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Text",
+          "text": "Loaded",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "message": {
+      "version": "v0.9.1",
+      "updateComponents": {
+        "surfaceId": "main",
+        "components": [
+          {
+            "id": "upload",
+            "component": "Progress",
+            "label": "Upload",
+            "value": {
+              "path": "/upload/percent"
+            },
+            "max": 50
+          },
+          {
+            "id": "root",
+            "component": "Column",
+            "children": [
+              "heading",
+              "card",
+              "later",
+              "upload"
+            ],
+            "align": "stretch"
+          }
+        ]
+      }
+    },
+    "tree": {
+      "kind": "Column",
+      "justify": null,
+      "align": "stretch",
+      "children": [
+        {
+          "kind": "Text",
+          "text": "Hello",
+          "children": []
+        },
+        {
+          "kind": "Card",
+          "children": [
+            {
+              "kind": "Row",
+              "justify": "space-between",
+              "align": null,
+              "children": [
+                {
+                  "kind": "Text",
+                  "text": "One",
+                  "children": []
+                },
+                {
+                  "kind": "Text",
+                  "text": "Changed",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Text",
+          "text": "Loaded",
+          "children": []
+        },
+        {
+          "kind": "Progress",
+          "label": "Upload",
+          "value": 40,
+          "max": 50,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "message": {
+      "version": "v0.9.1",
+      "updateDataModel": {
+        "surfaceId": "main",
+        "path": "/upload/percent",
+        "value": 60
+      }
+    },
+    "tree": {
+      "kind": "Column",
+      "justify": null,
+      "align": "stretch",
+      "children": [
+        {
+          "kind": "Text",
+          "text": "Hello",
+          "children": []
+        },
+        {
+          "kind": "Card",
+          "children": [
+            {
+              "kind": "Row",
+              "justify": "space-between",
+              "align": null,
+              "children": [
+                {
+                  "kind": "Text",
+                  "text": "One",
+                  "children": []
+                },
+                {
+                  "kind": "Text",
+                  "text": "Changed",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Text",
+          "text": "Loaded",
+          "children": []
+        },
+        {
+          "kind": "Progress",
+          "label": "Upload",
+          "value": 50,
+          "max": 50,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "message": {
+      "version": "v0.9.1",
+      "updateDataModel": {
+        "surfaceId": "main",
+        "path": "/upload/percent",
+        "value": "half"
+      }
+    },
+    "tree": {
+      "kind": "Column",
+      "justify": null,
+      "align": "stretch",
+      "children": [
+        {
+          "kind": "Text",
+          "text": "Hello",
+          "children": []
+        },
+        {
+          "kind": "Card",
+          "children": [
+            {
+              "kind": "Row",
+              "justify": "space-between",
+              "align": null,
+              "children": [
+                {
+                  "kind": "Text",
+                  "text": "One",
+                  "children": []
+                },
+                {
+                  "kind": "Text",
+                  "text": "Changed",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Text",
+          "text": "Loaded",
+          "children": []
+        },
+        {
+          "kind": "Progress",
+          "label": "Upload",
+          "value": null,
+          "max": 50,
+          "children": []
+        }
+      ]
+    }
   }
 ]
