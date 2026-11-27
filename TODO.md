@@ -10,9 +10,9 @@
 - [ ] **TASK-024** · P2 · mid · Close the adapter and parity evidence gaps (legacy P2-01)
   - Done when: every Still-to-prove box of P2-01 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - In repo: every catalog component is in the shared fixtures (`Progress` joined `layout.json`, TASK-042) and the Angular DOM bridge replays all six of them in its CI smoke test (TASK-049); the Flutter renderer test replays four of the six (TASK-050)
+  - In repo: done: every catalog component is in the shared fixtures (TASK-042) and web, React Native, Flutter and Angular all replay the six of them (TASK-049, TASK-050; the component-by-adapter table is in docs/a2ui-renderer.md#cross-adapter-fixture-parity)
   - Blocked on: Android and iOS devices for React Native tests beyond the nested-binding, rejection and bound-field-action cases; devices for Flutter layout, typography and accessibility parity against the web reference
-  - State: next: TASK-050; the two device boxes wait for the devices
+  - State: next: the two device boxes wait for the devices
 
 - [ ] **TASK-025** · P2 · mid · Close the extension SDK and compatibility manifest evidence gaps (legacy P2-02)
   - Done when: every Still-to-prove box of P2-02 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
@@ -154,8 +154,3 @@
   - Done when: every PostgreSQL store under packages/agent/src/postgres that records security or money state (definitions, runs, the action journal, memory, approvals, delegations and the cost budget) accepts an anchor as PostgresJwtRevocations and PostgresPublicationReleaseRegistry do (docs/kubernetes-data-plane.md, Anchors), or its documentation names why it cannot; packages/core/test/postgres-restore-rollback.test.mjs covers each one and shows a restore refused until the anchor is reconciled; the sentence in docs/kubernetes-data-plane.md#restoring-an-older-backup that only the connector's promotion floor can be anchored is brought in line with the anchors the stores accept; the P3-03 and P3-04 rollback boxes cite the test
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
-
-- [ ] **TASK-050** · P2 · small · Replay the shared variants and text-field fixtures in the Flutter renderer test
-  - Done when: adapters/flutter/test/renderer_test.dart replays every step of adapters/flutter/test/fixtures/variants.json and text-field.json against `FlutterSurfaceStore`, as packages/native/test/parity.test.mjs does for the React Native store (a `tree()` shape that carries the Text, TextField and Button variants; `writeField` for the typed steps), and checks each step's `tree`, `field` and `text`; `flutter analyze` and `flutter test` pass in `ghcr.io/cirruslabs/flutter:3.35.5`; the P2-01 box in docs/acceptance-checklists.md cites them
-  - Links: Ref: docs/flutter-adapter.md · From: TASK-024 · Lane: main
-  - State: next: read how `NativeNode` exposes `variant`, `label` and `value`, then extend the layout test's `tree()` helper

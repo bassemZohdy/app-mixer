@@ -53,3 +53,18 @@ Example (web): `button[data-variant="primary"] { background: #1a56db; color: whi
 ## Data updates
 
 A data-only update that arrives from outside the surface (`updateDataModel` from the host or the stream) no longer rebuilds it when every rendered component is built in (`Text`, `Column`, `Row`, `Card`, `TextField`, `Button`, `Progress`): the bound `Text`, `TextField` and `Progress` nodes are refreshed in place, so DOM nodes, focus and selection (with its direction) are kept and no element is created. An edit typed into a `TextField` still rebuilds the surface, so the elements of the previous render can no longer write. A surface that renders any custom component, or an update that changes the components, is rebuilt as before. Text that is being composed with an input method is never overwritten by an update to another path; the data catches up when composition ends. `node scripts/bench-renderer.mjs` compares the two paths on a 1,000-component surface.
+
+## Cross-adapter fixture parity
+
+The shared fixtures under `adapters/flutter/test/fixtures` are replayed by every adapter against the same expected output, so each catalog component is exercised on all four. The web renderer and the React Native store run them in `packages/native/test/parity.test.mjs` (the DOM normalisers live in `packages/native/test/support/web-dom.mjs`), the Flutter store in `adapters/flutter/test/renderer_test.dart` (the `Flutter` workflow), and the Angular DOM bridge in `.github/scripts/angular-smoke.mjs` (the `Angular AOT and lifecycle smoke test` CI step), which drives `A2UIComponent` in TestBed and reads the real DOM with the same normalisers. The React Native device workflows and the Flutter device workflows add on-device runs of their own scenarios; exact layout, typography and accessibility parity on devices is tracked separately in [the P2-01 checklist](acceptance-checklists.md#p2-01-adapters-and-parity).
+
+| Catalog component | Behavior checked | Shared fixture | Web | React Native | Flutter | Angular |
+| --- | --- | --- | --- | --- | --- | --- |
+| Text | literal and bound display (strings, numbers, booleans, null, objects, arrays, deletion); every variant | `bindings.json`, `variants.json`, `layout.json` | ✓ | ✓ | ✓ | ✓ |
+| Column, Row | hierarchy across incremental updates; every `justify` and `align` value | `layout.json`, `variants.json` | ✓ | ✓ | ✓ | ✓ |
+| Card | nested hierarchy, inside a column and around a row | `layout.json` | ✓ | ✓ | ✓ | ✓ |
+| TextField | `shortText`, `longText` and the default; label, value and bound text through updates, typing and deletion | `variants.json`, `text-field.json` | ✓ | ✓ | ✓ | ✓ |
+| Progress | determinate, clamped to `max`, and indeterminate values across data updates | `layout.json` | ✓ | ✓ | ✓ | ✓ |
+| Button | every variant; action context resolved from bound paths; interactive components inside a Button and an unsafe context path rejected | `variants.json`, `actions.json`, `rejections.json` | ✓ | ✓ | ✓ | ✓ |
+
+`rejections.json` also covers the messages every adapter must refuse as a whole: a null data path, a prototype path, an explicit null for an optional property, a cyclic `children` list, a root-bound field, an unsafe action-context path and interactive components inside a Button. Each adapter checks that the surface is unchanged afterwards; the Angular bridge additionally emits each rejection as an `error` output. Cases outside the shared fixtures, such as a Progress `max` of 0, an empty Card `child` and oversized models, stay in each adapter's own tests.
