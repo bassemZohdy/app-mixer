@@ -369,6 +369,7 @@ test(
       await memory.put(actor, memoryScope, 'k1', 'v1b', { expectedRevision: 1, ...keep() });
       await memory.put(actor, memoryScope, 'k2', 'v2', { expectedRevision: null, ...keep() });
       await budget.reserve(scope, 'r2', claim.leaseToken, 'call-1', 400);
+      await anchoredRuns.journal(scope, 'r2', claim.leaseToken).invoke('action-2', 'send', { n: 2 }, 3, async () => ({ ok: true }));
       await anchoredRuns.request(scope, 'r1', (await anchoredRuns.get(scope, 'r1')).revision, 'cancel');
       assert.equal((await anchoredRuns.get(scope, 'r1')).status, 'cancelled', 'a queued run cancelled after the backup');
       await runs.journal(scope, 'r2', claim.leaseToken).invoke('action-1', 'send', { n: 1 }, 3, dispatch);
@@ -392,6 +393,10 @@ test(
       // TASK-047.2.2: with a version anchor the run registry refuses instead of letting the cancelled run be claimed and run again.
       await assert.rejects(anchoredRuns.get(scope, 'r1'), /Agent runs were rolled back/);
       await assert.rejects(anchoredRuns.queued(scope), /Agent runs were rolled back/);
+      // TASK-047.2.3: and the action journal on the same version stream refuses instead of letting action-2 be dispatched again.
+      await assert.rejects(anchoredRuns.journal(scope, 'r2', claim.leaseToken).get('action-2'), /Agent runs were rolled back/);
+      await assert.rejects(anchoredRuns.journal(scope, 'r2', claim.leaseToken).invoke('action-2', 'send', { n: 2 }, 3, dispatch), /Agent runs were rolled back/);
+      assert.equal(dispatches, 1, 'the refused journal dispatched nothing');
       // Every store answers as if nothing happened, and nothing flags the gap.
       assert.equal((await definitions.get(actor, 'agent')).version, 1, 'the definition is back at its first version');
       assert.equal((await memory.list(actor, memoryScope)).items.length, 1, 'a memory written after the backup is gone');

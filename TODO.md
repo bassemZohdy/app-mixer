@@ -107,9 +107,8 @@
       - Done when: the helper and the AuditSequenceAnchor type are exported by @app-mixer/shared, core re-exports them with unchanged behaviour, and the agent package can import them; `node --test packages/core/test/audit-sequence-anchor.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/shared/test/sequence-anchor.test.mjs`
     - [x] **TASK-047.2.2** · high · Anchor the agent run store by a version drawn from a sequence on every change
       - Done when: a run store with an anchor refuses to answer after a restore until it is reconciled and an existing table gains its version column; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/agent/test/postgres-agent-runs-anchor.test.mjs`
-    - [/] **TASK-047.2.3** · high · Anchor the agent action journal on the same version stream as its run
+    - [x] **TASK-047.2.3** · high · Anchor the agent action journal on the same version stream as its run
       - Done when: an action journal with an anchor refuses after a restore, so a finished action is not dispatched again; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/agent/test/postgres-agent-actions-anchor.test.mjs`
-      - State: attempts 0/3; baseline 2036 passing; branch todo/TASK-047.2.3-anchor-agent-action-journal from todo/TASK-047.2-anchor-agent-run-action; next: build
   - [ ] **TASK-047.3** · high · Anchor the agent definition and memory stores as ADR 0014 decides
     - Done when: the definition and memory stores accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows the older definition and the erased memory are refused; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
   - [ ] **TASK-047.4** · high · Anchor the agent approval, delegation and cost budget stores as ADR 0014 decides
