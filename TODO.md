@@ -100,5 +100,5 @@
   - State: branch todo/FEAT-053-anchor-shared-cost from main; next: build children
   - [x] **FEAT-053.1** · high · Anchor the shared cost budgets and calls by a version drawn from a sequence on every change
     - Done when: a shared cost store with an anchor (one per tenant and budget) refuses to answer after a restore and an existing table gains its version column; `node --test packages/agent/test/postgres-agent-shared-cost-anchor.test.mjs`
-  - [ ] **FEAT-053.2** · low · Teach anchor-admin the shared cost key kind and bring the docs and ADR 0014 in line
+  - [x] **FEAT-053.2** · low · Teach anchor-admin the shared cost key kind and bring the docs and ADR 0014 in line
     - Done when: anchor-admin key finds the shared cost anchor file by tenant and budget and the docs and ADR 0014 no longer say the store is unanchored; `node --test packages/cli/test/process-files.test.mjs packages/cli/test/anchor-admin.test.mjs`

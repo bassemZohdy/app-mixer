@@ -9,6 +9,7 @@
 //   key capability-audit <tenant>                            key authentication-failures
 //   key offline-recovery <tenant> <application>              key offline-executions <tenant> <application>
 //   key agent-definitions|agent-runs|agent-memory|agent-approvals|agent-delegations|agent-cost-budget <tenant> <agent>
+//   key agent-shared-cost <tenant> <budget>
 // Raising an anchor is always allowed. Lowering one removes the protection a restored database was refused by, so it needs `--allow-lower` and
 // a `--reason` (at least eight characters). Every change is logged to `anchor-admin.log` in the directory as JSON lines: an `intent` line
 // is written first and the change is made only if that write succeeded, then an `applied` line records the outcome. Writes use the same lock
@@ -46,7 +47,10 @@ const keys = {
   'offline-recovery': [2, (t, a) => offlineRecoveryAnchorKey(t, a) + '.sequence'],
   'offline-executions': [2, (t, a) => offlineExecutionAnchorKey(t, a) + '.sequence'],
   ...Object.fromEntries(
-    ['agent-definitions', 'agent-runs', 'agent-memory', 'agent-approvals', 'agent-delegations', 'agent-cost-budget'].map(kind => [kind, [2, (t, a) => agentAnchorKey(kind, t, a) + '.sequence']])
+    ['agent-definitions', 'agent-runs', 'agent-memory', 'agent-approvals', 'agent-delegations', 'agent-cost-budget', 'agent-shared-cost'].map(kind => [
+      kind,
+      [2, (t, a) => agentAnchorKey(kind, t, a) + '.sequence']
+    ])
   ),
   'authentication-failures': [0, () => authenticationFailureAnchorKey + '.sequence']
 };
