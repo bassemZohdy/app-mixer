@@ -4,6 +4,7 @@ import type { AgentRunScope } from '../runs/durable-runs.js';
 import type { AgentApproval, AgentApprovalActor, AgentApprovalAccess } from '../runs/agent-approvals.js';
 import { isIdentifier } from '../validation.js';
 import { AgentError } from '../errors.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor, type AnchorErrorHandler, type AuditSequenceAnchor } from '@app-mixer/shared';
 
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 type Identity = { tenantId: string; agentId: string; runId: string; actionId: string; operationId: string };
@@ -15,6 +16,9 @@ type Options = {
   transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
   timeoutMs?: number;
   maxPending?: number;
+  /** A high-water mark of the newest approval event, held outside the database (ADR 0014). A restored older database is then refused. */
+  versionAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
 };
 const valid = isIdentifier;
 /** Internal integration work; the host authenticates actors and authorizes access. */
@@ -26,6 +30,8 @@ export class PostgresAgentApprovalsFoundation {
   private readonly authorize: Options['authorize'];
   private readonly timeoutMs?: number | undefined;
   private readonly maxPending?: number | undefined;
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
   private pending = 0;
   constructor(options: Options) {
     if (
@@ -39,7 +45,9 @@ export class PostgresAgentApprovalsFoundation {
       typeof options.transaction !== 'function' ||
       (options.timeoutMs === undefined) !== (options.maxPending === undefined) ||
       (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)) ||
-      (options.maxPending !== undefined && (!Number.isSafeInteger(options.maxPending) || options.maxPending < 1 || options.maxPending > 100))
+      (options.maxPending !== undefined && (!Number.isSafeInteger(options.maxPending) || options.maxPending < 1 || options.maxPending > 100)) ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
     )
       throw Error('Invalid shared approval configuration');
     this.scope = { tenantId: options.scope.tenantId, agentId: options.scope.agentId };
@@ -49,6 +57,36 @@ export class PostgresAgentApprovalsFoundation {
     this.authorize = options.authorize;
     this.timeoutMs = options.timeoutMs;
     this.maxPending = options.maxPending;
+    this.anchor = options.versionAnchor;
+    this.onAnchorError = options.onAnchorError;
+  }
+  /** Refuses to answer when the newest approval event of this agent is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(): Promise<void> {
+    if (!this.anchor) return;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: agentAnchorKey('agent-approvals', this.scope.tenantId, this.scope.agentId),
+      unavailable: 'Agent approvals anchor unavailable',
+      rolledBack: 'Agent approvals were rolled back',
+      onError: this.onAnchorError,
+      stored: async () => {
+        const result = await this.query('SELECT COALESCE(max(id),0) AS stored FROM app_mixer_shared_approval_events WHERE tenant_id=$1 AND agent_id=$2', [this.scope.tenantId, this.scope.agentId]),
+          stored = Number(result.rows?.[0]?.stored);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || !Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid shared approval data');
+        return stored;
+      }
+    });
+  }
+  /** The change is committed; the anchor moves to the id of the event it recorded, and a failure leaves it behind until the next call catches it up. */
+  private async advance(eventId: number): Promise<void> {
+    if (!this.anchor) return;
+    if (!Number.isSafeInteger(eventId) || eventId < 1) throw Error('Invalid shared approval data');
+    await advanceAnchor(this.anchor, agentAnchorKey('agent-approvals', this.scope.tenantId, this.scope.agentId), eventId, this.onAnchorError);
+  }
+  /** Records an event; with an anchor it returns the id the event drew. */
+  private async record(query: Query, sql: string, args: unknown[]): Promise<number> {
+    const result = await query(this.anchor ? sql + ' RETURNING id' : sql, args);
+    return this.anchor ? Number(result.rows[0]?.id) : 0;
   }
   private args(): [string, string, string] {
     return [this.scope.tenantId, this.scope.agentId, this.runId];
@@ -282,6 +320,7 @@ export class PostgresAgentApprovalsFoundation {
           '$$',
         []
       );
+      if (this.anchor) await query('CREATE INDEX IF NOT EXISTS app_mixer_shared_approval_events_newest ON app_mixer_shared_approval_events(tenant_id,agent_id,id)', []);
     });
   }
   private async row(query: Query, actionId: string): Promise<Record<string, unknown> | undefined> {
@@ -349,7 +388,9 @@ export class PostgresAgentApprovalsFoundation {
       hash = createHash('sha256').update(payload).digest('hex'),
       bound = authority ?? null;
     await this.permit(requester, 'request', actionId, operationId);
-    return this.transaction(async query => {
+    await this.checkAnchor();
+    let eventId = 0;
+    const saved = await this.transaction(async query => {
       const run = (await query('SELECT status,lease_token,lease_until,deadline,definition_version FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 FOR UPDATE', this.args()))
           .rows[0],
         time = await this.clock(query);
@@ -377,7 +418,7 @@ export class PostgresAgentApprovalsFoundation {
         requester.principalId,
         bound
       ]);
-      await query("INSERT INTO app_mixer_shared_approval_events (tenant_id,agent_id,run_id,action_id,event,actor_id,event_at) VALUES ($1,$2,$3,$4,'requested',$5,$6)", [
+      eventId = await this.record(query, "INSERT INTO app_mixer_shared_approval_events (tenant_id,agent_id,run_id,action_id,event,actor_id,event_at) VALUES ($1,$2,$3,$4,'requested',$5,$6)", [
         ...this.args(),
         actionId,
         requester.principalId,
@@ -390,10 +431,13 @@ export class PostgresAgentApprovalsFoundation {
       ]);
       return this.convert((await this.row(query, actionId))!, time);
     });
+    if (eventId) await this.advance(eventId);
+    return saved;
   }
   async get(actor: AgentApprovalActor, actionId: string): Promise<AgentApproval | undefined> {
     const who = this.actor(actor);
     if (!valid(actionId)) throw Error('Invalid approval');
+    await this.checkAnchor();
     const before = await this.row(this.query, actionId);
     await this.permit(who, 'read', actionId, before ? String(before.operation_id) : 'unknown');
     const after = await this.row(this.query, actionId);
@@ -407,6 +451,7 @@ export class PostgresAgentApprovalsFoundation {
     if (callerSignal !== undefined && !(callerSignal instanceof AbortSignal)) throw Error('Invalid approval signal');
     if (!options || (after !== '' && !valid(after)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid approval listing');
     await this.permit(who, 'list', 'all', 'all', callerSignal);
+    await this.checkAnchor();
     const rows = (
         await this.query(
           'SELECT action_id,operation_id FROM app_mixer_shared_approvals WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id COLLATE "C">$4 ORDER BY action_id COLLATE "C" LIMIT $5',
@@ -437,6 +482,7 @@ export class PostgresAgentApprovalsFoundation {
     const who = this.actor(actor);
     if (callerSignal !== undefined && !(callerSignal instanceof AbortSignal)) throw Error('Invalid approval signal');
     if (!valid(actionId)) throw Error('Invalid approval');
+    await this.checkAnchor();
     const before = await this.row(this.query, actionId);
     await this.permit(who, 'history', actionId, before ? String(before.operation_id) : 'unknown', callerSignal);
     const current = await this.row(this.query, actionId);
@@ -462,10 +508,12 @@ export class PostgresAgentApprovalsFoundation {
     const who = this.actor(actor);
     if (callerSignal !== undefined && !(callerSignal instanceof AbortSignal)) throw Error('Invalid approval signal');
     if (!valid(actionId) || !['approved', 'rejected', 'cancelled'].includes(decision)) throw Error('Invalid approval decision');
+    await this.checkAnchor();
     const before = await this.row(this.query, actionId);
     await this.permit(who, decision === 'cancelled' ? 'cancel' : 'decide', actionId, before ? String(before.operation_id) : 'unknown', callerSignal);
     if (callerSignal?.aborted) throw new AgentError('unavailable', 'Approval authorization unavailable');
-    return this.transaction(async query => {
+    let eventId = 0;
+    const saved = await this.transaction(async query => {
       const run = (await query('SELECT status,archived FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 FOR UPDATE', this.args())).rows[0],
         time = await this.clock(query),
         row = await this.row(query, actionId);
@@ -482,7 +530,7 @@ export class PostgresAgentApprovalsFoundation {
         who.principalId,
         time
       ]);
-      await query('INSERT INTO app_mixer_shared_approval_events (tenant_id,agent_id,run_id,action_id,event,actor_id,event_at) VALUES ($1,$2,$3,$4,$5,$6,$7)', [
+      eventId = await this.record(query, 'INSERT INTO app_mixer_shared_approval_events (tenant_id,agent_id,run_id,action_id,event,actor_id,event_at) VALUES ($1,$2,$3,$4,$5,$6,$7)', [
         ...this.args(),
         actionId,
         decision,
@@ -492,13 +540,17 @@ export class PostgresAgentApprovalsFoundation {
       if (callerSignal?.aborted) throw new AgentError('unavailable', 'Approval authorization unavailable');
       return this.convert(result.rows[0]!, time);
     });
+    if (eventId) await this.advance(eventId);
+    return saved;
   }
   async expire(actor: AgentApprovalActor, actionId: string): Promise<AgentApproval> {
     const who = this.actor(actor);
     if (!valid(actionId)) throw Error('Invalid approval');
+    await this.checkAnchor();
     const before = await this.row(this.query, actionId);
     await this.permit(who, 'expire', actionId, before ? String(before.operation_id) : 'unknown');
-    return this.transaction(async query => {
+    let eventId = 0;
+    const saved = await this.transaction(async query => {
       await query('SELECT 1 FROM app_mixer_shared_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 FOR UPDATE', this.args());
       const time = await this.clock(query),
         row = await this.row(query, actionId);
@@ -511,7 +563,7 @@ export class PostgresAgentApprovalsFoundation {
         who.principalId,
         time
       ]);
-      await query("INSERT INTO app_mixer_shared_approval_events (tenant_id,agent_id,run_id,action_id,event,actor_id,event_at) VALUES ($1,$2,$3,$4,'expired',$5,$6)", [
+      eventId = await this.record(query, "INSERT INTO app_mixer_shared_approval_events (tenant_id,agent_id,run_id,action_id,event,actor_id,event_at) VALUES ($1,$2,$3,$4,'expired',$5,$6)", [
         ...this.args(),
         actionId,
         who.principalId,
@@ -519,5 +571,7 @@ export class PostgresAgentApprovalsFoundation {
       ]);
       return this.convert(result.rows[0]!, time);
     });
+    if (eventId) await this.advance(eventId);
+    return saved;
   }
 }

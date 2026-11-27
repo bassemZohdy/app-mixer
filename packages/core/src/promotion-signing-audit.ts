@@ -46,8 +46,8 @@ const fields = [
   'signerPrincipal',
   'signature'
 ] as const;
-type Body = Omit<PromotionSigningAuditEntry, 'hash'>;
-const hashOf = (body: Body) =>
+export type PromotionSigningAuditBody = Omit<PromotionSigningAuditEntry, 'hash'>;
+const hashOf = (body: PromotionSigningAuditBody) =>
   createHash('sha256')
     .update(JSON.stringify(fields.map(name => body[name])))
     .digest('hex');
@@ -56,6 +56,111 @@ const packageDigest = (pkg: PromotionPackage) => {
   if (!digestPattern.test(digest)) throw Error('Invalid promotion package digest');
   return digest;
 };
+
+/** Validates the actor and the signed package and returns the entry fields both signing audits store; the sequence, previous hash and hash are the store's to derive. */
+export function signingAuditFields(actor: { tenantId: string; principalId: string }, signed: SignedPromotionPackage, time: number): Omit<PromotionSigningAuditBody, 'sequence' | 'previousHash'> {
+  if (
+    !actor ||
+    !text(actor.tenantId) ||
+    !text(actor.principalId) ||
+    !signed ||
+    typeof signed !== 'object' ||
+    !signed.package ||
+    !text(signed.package.definition?.id) ||
+    !validEnvironment(signed.package.sourceEnvironment) ||
+    !integer(signed.package.sourceVersion) ||
+    !validEnvironment(signed.targetEnvironment) ||
+    !text(signed.keyId) ||
+    typeof signed.signature !== 'string' ||
+    !signaturePattern.test(signed.signature)
+  )
+    throw Error('Invalid promotion signing audit entry');
+  const expectedVersion = signed.formatVersion === 1 ? null : signed.expectedVersion,
+    signerPrincipal = signed.formatVersion === 3 ? signed.signerPrincipal : null;
+  if ((expectedVersion !== null && !integer(expectedVersion)) || (signerPrincipal !== null && !text(signerPrincipal)) || !integer(time)) throw Error('Invalid promotion signing audit entry');
+  return {
+    recordedAt: time,
+    tenantId: actor.tenantId,
+    principalId: actor.principalId,
+    applicationId: signed.package.definition.id,
+    sourceEnvironment: signed.package.sourceEnvironment,
+    sourceVersion: signed.package.sourceVersion,
+    packageDigest: packageDigest(signed.package),
+    targetEnvironment: signed.targetEnvironment,
+    keyId: signed.keyId,
+    expectedVersion,
+    signerPrincipal,
+    signature: signed.signature
+  };
+}
+/** Converts a stored row (snake_case columns, numbers possibly as strings) into an entry. */
+export function promotionSigningAuditRow(value: Record<string, unknown>): PromotionSigningAuditEntry {
+  return {
+    sequence: Number(value.sequence),
+    previousHash: String(value.previous_hash),
+    recordedAt: Number(value.recorded_at),
+    tenantId: String(value.tenant_id),
+    principalId: String(value.principal_id),
+    applicationId: String(value.application_id),
+    sourceEnvironment: String(value.source_environment),
+    sourceVersion: Number(value.source_version),
+    packageDigest: String(value.package_digest),
+    targetEnvironment: String(value.target_environment),
+    keyId: String(value.key_id),
+    expectedVersion: value.expected_version === null ? null : Number(value.expected_version),
+    signerPrincipal: value.signer_principal === null ? null : String(value.signer_principal),
+    signature: String(value.signature),
+    hash: String(value.hash)
+  };
+}
+/** Recomputes the chain over entries in sequence order; optionally requires that a previously retained head is still present. */
+export function verifyPromotionSigningAuditChain(
+  entries: Iterable<PromotionSigningAuditEntry>,
+  checkpoint?: PromotionSigningAuditHead
+): { valid: boolean; head: PromotionSigningAuditHead; error?: string } {
+  if (checkpoint !== undefined && (!checkpoint || !integer(checkpoint.sequence) || typeof checkpoint.hash !== 'string' || !digestPattern.test(checkpoint.hash)))
+    throw Error('Invalid promotion signing audit checkpoint');
+  let previous = GENESIS,
+    expected = 1,
+    checkpointSeen = !checkpoint || (checkpoint.sequence === 0 && checkpoint.hash === GENESIS);
+  for (const entry of entries) {
+    const { hash, ...body } = entry,
+      head = { sequence: entry.sequence, hash };
+    if (entry.sequence !== expected) return { valid: false, head, error: `Missing entry ${expected}` };
+    if (entry.previousHash !== previous) return { valid: false, head, error: `Broken chain at ${entry.sequence}` };
+    if (hashOf(body) !== hash) return { valid: false, head, error: `Altered entry ${entry.sequence}` };
+    if (checkpoint && checkpoint.sequence === entry.sequence) {
+      if (checkpoint.hash !== hash) return { valid: false, head, error: `Checkpoint mismatch at ${entry.sequence}` };
+      checkpointSeen = true;
+    }
+    previous = hash;
+    expected++;
+  }
+  const head = { sequence: expected - 1, hash: previous };
+  return checkpointSeen ? { valid: true, head } : { valid: false, head, error: 'Checkpoint not found' };
+}
+/** Compares imported signature evidence with the entries recorded for each signature; `lookup` returns the entries for one signature in sequence order. */
+export function unauditedPromotionImports(imports: PromotionImportRecord[], lookup: (signature: string) => PromotionSigningAuditEntry[]): UnauditedPromotionImport[] {
+  if (!Array.isArray(imports) || imports.length > 10000) throw Error('Invalid promotion import records');
+  return imports.flatMap((item, index): UnauditedPromotionImport[] => {
+    if (!item || !item.evidence || typeof item.evidence.signature !== 'string' || !signaturePattern.test(item.evidence.signature)) throw Error('Invalid promotion import records');
+    const matches = lookup(item.evidence.signature);
+    if (!matches.length) return [{ index, reason: 'missing' }];
+    const digest = item.packageDigest?.startsWith('sha256:') ? item.packageDigest.slice(7) : item.packageDigest;
+    const same = matches.some(
+      entry =>
+        entry.applicationId === item.applicationId &&
+        entry.sourceEnvironment === item.sourceEnvironment &&
+        entry.sourceVersion === item.sourceVersion &&
+        entry.packageDigest === digest &&
+        entry.targetEnvironment === item.targetEnvironment &&
+        entry.keyId === item.evidence.keyId &&
+        entry.expectedVersion === (item.evidence.expectedVersion ?? null) &&
+        entry.signerPrincipal === (item.evidence.signerPrincipal ?? null)
+    );
+    return same ? [] : [{ index, reason: 'mismatch' }];
+  });
+}
 
 /** Append-only, hash-chained record of promotion signatures, kept by the signing service separately from any target. */
 export class SqlitePromotionSigningAudit {
@@ -80,44 +185,14 @@ export class SqlitePromotionSigningAudit {
   }
   /** Record one signature; the entry commits before the caller may release the envelope. */
   record(actor: { tenantId: string; principalId: string }, signed: SignedPromotionPackage): PromotionSigningAuditEntry {
-    if (
-      !actor ||
-      !text(actor.tenantId) ||
-      !text(actor.principalId) ||
-      !signed ||
-      typeof signed !== 'object' ||
-      !signed.package ||
-      !text(signed.package.definition?.id) ||
-      !validEnvironment(signed.package.sourceEnvironment) ||
-      !integer(signed.package.sourceVersion) ||
-      !validEnvironment(signed.targetEnvironment) ||
-      !text(signed.keyId) ||
-      typeof signed.signature !== 'string' ||
-      !signaturePattern.test(signed.signature)
-    )
-      throw Error('Invalid promotion signing audit entry');
-    const expectedVersion = signed.formatVersion === 1 ? null : signed.expectedVersion,
-      signerPrincipal = signed.formatVersion === 3 ? signed.signerPrincipal : null,
-      time = this.clock();
-    if ((expectedVersion !== null && !integer(expectedVersion)) || (signerPrincipal !== null && !text(signerPrincipal)) || !integer(time)) throw Error('Invalid promotion signing audit entry');
+    const fields = signingAuditFields(actor, signed, this.clock());
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const last = this.db.prepare('SELECT sequence,hash FROM promotion_signing_audit ORDER BY sequence DESC LIMIT 1').get() as { sequence: number; hash: string } | undefined;
-      const body: Body = {
+      const body: PromotionSigningAuditBody = {
+        ...fields,
         sequence: Number(last?.sequence ?? 0) + 1,
-        previousHash: last ? String(last.hash) : GENESIS,
-        recordedAt: time,
-        tenantId: actor.tenantId,
-        principalId: actor.principalId,
-        applicationId: signed.package.definition.id,
-        sourceEnvironment: signed.package.sourceEnvironment,
-        sourceVersion: signed.package.sourceVersion,
-        packageDigest: packageDigest(signed.package),
-        targetEnvironment: signed.targetEnvironment,
-        keyId: signed.keyId,
-        expectedVersion,
-        signerPrincipal,
-        signature: signed.signature
+        previousHash: last ? String(last.hash) : GENESIS
       };
       const entry = { ...body, hash: hashOf(body) };
       this.db
@@ -152,7 +227,7 @@ export class SqlitePromotionSigningAudit {
     const after = options?.after ?? 0,
       limit = options?.limit ?? 100;
     if (!integer(after) || !integer(limit) || limit < 1 || limit > 1000) throw Error('Invalid promotion signing audit query');
-    return (this.db.prepare('SELECT * FROM promotion_signing_audit WHERE sequence>? ORDER BY sequence LIMIT ?').all(after, limit) as Record<string, unknown>[]).map(row);
+    return (this.db.prepare('SELECT * FROM promotion_signing_audit WHERE sequence>? ORDER BY sequence LIMIT ?').all(after, limit) as Record<string, unknown>[]).map(promotionSigningAuditRow);
   }
   /** The latest sequence and hash; publish or retain it elsewhere so truncation of the tail can be detected. */
   head(): PromotionSigningAuditHead {
@@ -161,73 +236,19 @@ export class SqlitePromotionSigningAudit {
   }
   /** Recompute the chain; optionally require that a previously retained head is still present. */
   verify(checkpoint?: PromotionSigningAuditHead): { valid: boolean; head: PromotionSigningAuditHead; error?: string } {
-    if (checkpoint !== undefined && (!checkpoint || !integer(checkpoint.sequence) || typeof checkpoint.hash !== 'string' || !digestPattern.test(checkpoint.hash)))
-      throw Error('Invalid promotion signing audit checkpoint');
-    let previous = GENESIS,
-      expected = 1,
-      checkpointSeen = !checkpoint || (checkpoint.sequence === 0 && checkpoint.hash === GENESIS);
-    for (const value of this.db.prepare('SELECT * FROM promotion_signing_audit ORDER BY sequence').iterate() as Iterable<Record<string, unknown>>) {
-      const entry = row(value),
-        { hash, ...body } = entry,
-        head = { sequence: entry.sequence, hash };
-      if (entry.sequence !== expected) return { valid: false, head, error: `Missing entry ${expected}` };
-      if (entry.previousHash !== previous) return { valid: false, head, error: `Broken chain at ${entry.sequence}` };
-      if (hashOf(body) !== hash) return { valid: false, head, error: `Altered entry ${entry.sequence}` };
-      if (checkpoint && checkpoint.sequence === entry.sequence) {
-        if (checkpoint.hash !== hash) return { valid: false, head, error: `Checkpoint mismatch at ${entry.sequence}` };
-        checkpointSeen = true;
-      }
-      previous = hash;
-      expected++;
-    }
-    const head = { sequence: expected - 1, hash: previous };
-    return checkpointSeen ? { valid: true, head } : { valid: false, head, error: 'Checkpoint not found' };
+    return verifyPromotionSigningAuditChain(
+      Array.from(this.db.prepare('SELECT * FROM promotion_signing_audit ORDER BY sequence').iterate() as Iterable<Record<string, unknown>>).map(promotionSigningAuditRow),
+      checkpoint
+    );
   }
   /** Compare a target's imported signature evidence with this log. Returns imports the signing service did not record. */
   findUnaudited(imports: PromotionImportRecord[]): UnauditedPromotionImport[] {
-    if (!Array.isArray(imports) || imports.length > 10000) throw Error('Invalid promotion import records');
     const lookup = this.db.prepare('SELECT * FROM promotion_signing_audit WHERE signature=? ORDER BY sequence');
-    return imports.flatMap((item, index): UnauditedPromotionImport[] => {
-      if (!item || !item.evidence || typeof item.evidence.signature !== 'string' || !signaturePattern.test(item.evidence.signature)) throw Error('Invalid promotion import records');
-      const matches = (lookup.all(item.evidence.signature) as Record<string, unknown>[]).map(row);
-      if (!matches.length) return [{ index, reason: 'missing' }];
-      const digest = item.packageDigest?.startsWith('sha256:') ? item.packageDigest.slice(7) : item.packageDigest;
-      const same = matches.some(
-        entry =>
-          entry.applicationId === item.applicationId &&
-          entry.sourceEnvironment === item.sourceEnvironment &&
-          entry.sourceVersion === item.sourceVersion &&
-          entry.packageDigest === digest &&
-          entry.targetEnvironment === item.targetEnvironment &&
-          entry.keyId === item.evidence.keyId &&
-          entry.expectedVersion === (item.evidence.expectedVersion ?? null) &&
-          entry.signerPrincipal === (item.evidence.signerPrincipal ?? null)
-      );
-      return same ? [] : [{ index, reason: 'mismatch' }];
-    });
+    return unauditedPromotionImports(imports, signature => (lookup.all(signature) as Record<string, unknown>[]).map(promotionSigningAuditRow));
   }
   close(): void {
     this.db.close();
   }
-}
-function row(value: Record<string, unknown>): PromotionSigningAuditEntry {
-  return {
-    sequence: Number(value.sequence),
-    previousHash: String(value.previous_hash),
-    recordedAt: Number(value.recorded_at),
-    tenantId: String(value.tenant_id),
-    principalId: String(value.principal_id),
-    applicationId: String(value.application_id),
-    sourceEnvironment: String(value.source_environment),
-    sourceVersion: Number(value.source_version),
-    packageDigest: String(value.package_digest),
-    targetEnvironment: String(value.target_environment),
-    keyId: String(value.key_id),
-    expectedVersion: value.expected_version === null ? null : Number(value.expected_version),
-    signerPrincipal: value.signer_principal === null ? null : String(value.signer_principal),
-    signature: String(value.signature),
-    hash: String(value.hash)
-  };
 }
 
 /** A control-plane export signer that records every signature before releasing it. */

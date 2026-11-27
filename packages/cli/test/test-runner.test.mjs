@@ -12,7 +12,7 @@ test('test runner discovers each workspace and propagates test failures', async 
   try {
     await mkdir(join(root, 'scripts'));
     await writeFile(join(root, 'scripts', 'run-tests.mjs'), await readFile(resolve('scripts/run-tests.mjs')));
-    for (const name of ['core', 'cli', 'web', 'native', 'agent']) {
+    for (const name of ['core', 'cli', 'web', 'native', 'agent', 'shared']) {
       const dir = join(root, 'packages', name, 'test');
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, 'sample.test.mjs'), "import {test} from 'node:test';test('fixture',()=>{});\n");
@@ -22,7 +22,7 @@ test('test runner discovers each workspace and propagates test failures', async 
       env = { ...process.env, APP_MIXER_TEST_CONCURRENCY: '2' };
     delete env.NODE_TEST_CONTEXT;
     const result = await run(process.execPath, [script], { cwd: tmpdir(), env });
-    assert.match(result.stdout, /pass 5/);
+    assert.match(result.stdout, /pass 6/);
     assert.match(result.stdout, /fail 0/);
     for (const value of ['0', '33', '01', 'x', ''])
       await assert.rejects(run(process.execPath, [script], { env: { ...env, APP_MIXER_TEST_CONCURRENCY: value } }), error => error.code === 1 && /integer from 1 to 32/.test(error.stderr));

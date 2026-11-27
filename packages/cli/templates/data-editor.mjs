@@ -241,6 +241,26 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
       ...(schema.multipleOf === undefined ? {} : { multipleOf: schema.multipleOf })
     };
   };
+  // `readOnly` must be a boolean. `default` must be a JSON scalar, or null for a nullable property, that satisfies the property's own
+  // rules (type, enum or const, bounds, length, pattern and the bounded combinators), so the form never offers a value the server would refuse.
+  const annotations = (spec, nullable) => {
+    if (spec.readOnly !== undefined && typeof spec.readOnly !== 'boolean') throw Error('Unsupported record JSON Schema form');
+    let jsonDefault;
+    if (Object.hasOwn(spec, 'default')) {
+      const value = spec.default;
+      if (value === null ? !nullable : !['string', 'number', 'boolean'].includes(typeof value)) throw Error('Unsupported record JSON Schema form');
+      if (value !== null) {
+        const rules = {};
+        for (const key of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'])
+          if (Object.hasOwn(spec, key)) rules[key] = spec[key];
+        if (spec.type !== 'mixed') rules.type = spec.type;
+        if (spec._choices !== undefined) rules.enum = [...spec._choices];
+        if (!matchesContains(compileContains(rules, 0), value)) throw Error('Unsupported record JSON Schema form');
+      }
+      jsonDefault = value;
+    }
+    return { ...(jsonDefault === undefined ? {} : { jsonDefault }), ...(spec.readOnly === true ? { jsonReadOnly: true } : {}) };
+  };
   const scalarType = type =>
     Array.isArray(type) && type.length === 2 && type.includes('null') && new Set(type).size === 2 && type.some(value => ['string', 'number', 'integer', 'boolean', 'object', 'array'].includes(value))
       ? { type: type.find(value => value !== 'null'), nullable: true }
@@ -921,7 +941,9 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
             'not',
             'if',
             'then',
-            'else'
+            'else',
+            'default',
+            'readOnly'
           ]) ||
           !['string', 'number', 'integer', 'boolean', 'null', 'mixed'].includes(scalarType(schemaScalar(property.items).type).type) ||
           (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120))
@@ -932,7 +954,23 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           minItems = property.minItems === undefined ? 0 : property.minItems,
           maxItems = property.maxItems === undefined ? 50 : property.maxItems;
         if (
-          !keys(spec, ['type', 'title', 'description', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', '_nullable', '_choices']) ||
+          !keys(spec, [
+            'type',
+            'title',
+            'description',
+            'minimum',
+            'maximum',
+            'exclusiveMinimum',
+            'exclusiveMaximum',
+            'multipleOf',
+            'minLength',
+            'maxLength',
+            'pattern',
+            '_nullable',
+            '_choices',
+            'default',
+            'readOnly'
+          ]) ||
           (property.uniqueItems !== undefined && typeof property.uniqueItems !== 'boolean') ||
           !Number.isSafeInteger(minItems) ||
           !Number.isSafeInteger(maxItems) ||
@@ -964,7 +1002,8 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           itemTitle: spec.title,
           ...(spec.description === undefined ? {} : { description: spec.description }),
           ...numericConstraints(spec, numeric),
-          ...(spec._choices === undefined ? {} : { jsonChoices: [...spec._choices] })
+          ...(spec._choices === undefined ? {} : { jsonChoices: [...spec._choices] }),
+          ...annotations(spec, spec._nullable === true || spec.type === 'null')
         };
         if (spec._nullable || spec.type === 'null') item = { ...item, nullable: true };
         const itemPattern = pattern(spec.pattern, spec.type);
@@ -992,7 +1031,7 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
       }
       if (property.type === 'mixed') {
         if (
-          !keys(property, ['type', 'title', 'description', '_nullable', '_choices']) ||
+          !keys(property, ['type', 'title', 'description', '_nullable', '_choices', 'default', 'readOnly']) ||
           (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
           (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024))
         )
@@ -1007,6 +1046,7 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           required: requiredField,
           jsonChoices: [...property._choices],
           nullable: property._nullable === true,
+          ...annotations(property, property._nullable === true),
           ...(property.description === undefined ? {} : { description: property.description })
         });
         if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
@@ -1014,19 +1054,44 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
       }
       if (property.type === 'null') {
         if (
-          !keys(property, ['type', 'title', 'description']) ||
+          !keys(property, ['type', 'title', 'description', 'default', 'readOnly']) ||
           (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
           (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024))
         )
           throw Error('Unsupported record JSON Schema form');
         const label = [...labels, name].join(' / ');
         if (!label.trim() || label.length > 120) throw Error('Unsupported record JSON Schema form');
-        fields.push({ key, label, type: 'null', path: next, required: requiredField, nullable: true, ...(property.description === undefined ? {} : { description: property.description }) });
+        fields.push({
+          key,
+          label,
+          type: 'null',
+          path: next,
+          required: requiredField,
+          nullable: true,
+          ...annotations(property, true),
+          ...(property.description === undefined ? {} : { description: property.description })
+        });
         if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
         continue;
       }
       if (
-        !keys(property, ['type', 'title', 'description', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', '_nullable', '_choices']) ||
+        !keys(property, [
+          'type',
+          'title',
+          'description',
+          'minimum',
+          'maximum',
+          'exclusiveMinimum',
+          'exclusiveMaximum',
+          'multipleOf',
+          'minLength',
+          'maxLength',
+          'pattern',
+          '_nullable',
+          '_choices',
+          'default',
+          'readOnly'
+        ]) ||
         !['string', 'number', 'integer', 'boolean'].includes(property.type) ||
         (property.title !== undefined && typeof property.title !== 'string')
       )
@@ -1058,6 +1123,7 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           ...(property._choices === undefined ? {} : { jsonChoices: [...property._choices] }),
           ...(fieldPattern ? { jsonPattern: fieldPattern } : {}),
           ...(property._nullable ? { nullable: true } : {}),
+          ...annotations(property, property._nullable === true),
           ...(property.type === 'string'
             ? {
                 jsonString: true,
@@ -1216,6 +1282,8 @@ function disableGroup(group, disabled) {
   group.control.disabled = disabled;
   if (group.nullToggle) group.nullToggle.disabled = disabled || !group.control.checked;
 }
+// A read-only field says so in place of the required or optional hint: the user cannot change it either way.
+const caption = field => field.label + (field.jsonReadOnly ? ' (read-only)' : field.required ? ' (required)' : ' (optional)');
 
 function fieldControl(document, field) {
   field = { ...field };
@@ -1233,7 +1301,7 @@ function fieldControl(document, field) {
     if (help) control.setAttribute('aria-describedby', help);
     label.append(error);
     const update = () => {
-      text.textContent = field.required ? ' ' + field.label + ' (always null)' : ' Include ' + field.label + ' as null';
+      text.textContent = field.jsonReadOnly ? ' ' + field.label + ' (read-only)' : field.required ? ' ' + field.label + ' (always null)' : ' Include ' + field.label + ' as null';
     };
     update();
     return {
@@ -1246,7 +1314,7 @@ function fieldControl(document, field) {
         update();
       },
       setDisabled(disabled) {
-        control.disabled = disabled || field.required;
+        control.disabled = disabled || field.required || field.jsonReadOnly === true;
       },
       setValue(value) {
         control.checked = field.required || value === null;
@@ -1384,8 +1452,10 @@ function fieldControl(document, field) {
       } else {
         if (!itemField) throw Error('Unsupported record JSON Schema form');
         const item = fieldControl(document, field.prefixItems ? { ...itemField, label: field.label + ' item ' + (rows.length + 1) } : itemField);
-        if (item.setValue) item.setValue(value);
-        else if (value !== undefined) item.control.value = String(value);
+        // A row the user adds starts from the item's default; a loaded row starts from its stored value.
+        const initial = value === undefined && Object.hasOwn(itemField, 'jsonDefault') ? itemField.jsonDefault : value;
+        if (item.setValue) item.setValue(initial);
+        else if (initial !== undefined) item.control.value = String(initial);
         row.append(item.wrapper ?? item.control.parentElement, remove);
         entry = { item, remove, row };
       }
@@ -1450,7 +1520,7 @@ function fieldControl(document, field) {
   control.style.maxWidth = '28rem';
   control.style.boxSizing = 'border-box';
   error.style.display = 'block';
-  title.textContent = field.label + (field.required ? ' (required)' : ' (optional)');
+  title.textContent = caption(field);
   label.appendChild(title);
   if (control.tagName === 'SELECT') {
     const choices = field.jsonChoices ?? (field.type === 'boolean' ? ['true', 'false'] : field.options);
@@ -1472,7 +1542,7 @@ function fieldControl(document, field) {
     if (field.type === 'integer') control.step = '1';
     if (field.maxLength !== undefined) control.maxLength = field.maxLength;
   }
-  control.required = field.required;
+  control.required = field.required && !field.jsonReadOnly;
   error.setAttribute('role', 'alert');
   label.append(control);
   if (field.description) {
@@ -1495,13 +1565,13 @@ function fieldControl(document, field) {
   let include,
     nullToggle,
     wrapper,
-    disabled = false,
+    disabled = field.jsonReadOnly === true,
     includeText,
     nullText;
   const setLabel = value => {
     if (field.label === value) return;
     field.label = value;
-    title.textContent = value + (field.required ? ' (required)' : ' (optional)');
+    title.textContent = caption(field);
     if (includeText) includeText.textContent = ' Include ' + value;
     if (nullText) nullText.textContent = ' Set ' + value + ' to null';
   };
@@ -1546,7 +1616,7 @@ function fieldControl(document, field) {
       wrapper,
       setLabel,
       setDisabled(value) {
-        disabled = value;
+        disabled = field.jsonReadOnly === true || value;
         update();
       },
       setValue(value) {
@@ -1557,7 +1627,20 @@ function fieldControl(document, field) {
       }
     };
   }
-  return { field, control, error, dirty: false, setLabel };
+  return {
+    field,
+    control,
+    error,
+    dirty: false,
+    setLabel,
+    ...(field.jsonReadOnly
+      ? {
+          setDisabled() {
+            control.disabled = true;
+          }
+        }
+      : {})
+  };
 }
 
 // The host chooses the capabilities; application definitions only supply a label.
@@ -2132,7 +2215,8 @@ export function createRecordEditor({
       if (item.include && field.jsonString && !item.include.checked) return undefined;
       if (item.nullToggle && item.nullToggle.checked) return null;
       if (field.jsonChoices && control.value === '') {
-        if (field.required || (field.jsonString && item.include?.checked)) throw Error('Choose a valid option.');
+        // A read-only field holds whatever the record carried; an empty one is simply absent.
+        if (!field.jsonReadOnly && (field.required || (field.jsonString && item.include?.checked))) throw Error('Choose a valid option.');
         return undefined;
       }
       const selected = field.jsonChoices ? field.jsonChoices[Number(control.value) - 1] : undefined;
@@ -2140,6 +2224,7 @@ export function createRecordEditor({
       if (field.type === 'mixed') return selected;
       if (field.jsonString) {
         const text = field.jsonChoices ? selected : control.value;
+        if (field.jsonReadOnly) return text === '' && !item.include?.checked ? undefined : text;
         if (field.options && !field.options.includes(text)) throw Error('Choose a valid option.');
         const length = Array.from(text).length;
         if (field.jsonMinLength !== undefined && length < field.jsonMinLength) throw Error('Enter at least ' + field.jsonMinLength + ' characters.');
@@ -2150,7 +2235,7 @@ export function createRecordEditor({
       const raw = control.value;
       if (control.validity.badInput) throw Error('Enter a valid number.');
       if (raw === '') {
-        if (field.required) throw Error('This field is required.');
+        if (field.required && !field.jsonReadOnly) throw Error('This field is required.');
         return undefined;
       }
       if (field.type === 'boolean') return field.jsonChoices ? selected : raw === 'true';
@@ -2161,6 +2246,8 @@ export function createRecordEditor({
       }
       const parsed = field.jsonChoices ? selected : Number(raw);
       if (!Number.isFinite(parsed) || (field.type === 'integer' && !Number.isSafeInteger(parsed))) throw Error(field.type === 'integer' ? 'Enter a whole number.' : 'Enter a valid number.');
+      // A read-only value is the server's, not the user's, so it is saved as it was loaded even where it bends the property's rules.
+      if (field.jsonReadOnly) return parsed;
       if (field.min !== undefined && parsed < field.min) throw Error('Enter a value of at least ' + field.min + '.');
       if (field.max !== undefined && parsed > field.max) throw Error('Enter a value of at most ' + field.max + '.');
       if (field.exclusiveMin !== undefined && parsed <= field.exclusiveMin) throw Error('Enter a value greater than ' + field.exclusiveMin + '.');
@@ -2258,7 +2345,9 @@ export function createRecordEditor({
           group.dirty = false;
         }
         for (const item of controls) {
-          const current = at(data, item.field.path ?? [item.field.key]);
+          let current = at(data, item.field.path ?? [item.field.key]);
+          // A new record starts from each scalar default; a loaded record never gains one, so stored data is never completed by the form.
+          if (result === null && current === undefined && Object.hasOwn(item.field, 'jsonDefault')) current = item.field.jsonDefault;
           if (item.setValue) item.setValue(current);
           else item.control.value = current === undefined ? '' : String(current);
           item.dirty = false;

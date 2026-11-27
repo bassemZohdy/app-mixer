@@ -225,6 +225,33 @@ void main() {
     for(final step in steps){store.apply(step['message']);final root=store.snapshot().single;expect(root==null?null:tree(root),step['tree']);}
   });
 
+  test('shared variants fixture matches the expected variant of every component', () {
+    const styles={'start':'flex-start','center':'center','end':'flex-end','stretch':'stretch','spaceBetween':'space-between','spaceAround':'space-around','spaceEvenly':'space-evenly'};
+    // The same shape parity.test.mjs reads from the React Native store: the variant a Text, TextField or Button kept, or its default.
+    Map<String,dynamic> tree(NativeNode node) => {
+      'kind':node.kind,
+      if(node.kind=='Text') ...{'variant':node.variant ?? 'body','text':node.text},
+      if(node.kind=='TextField') ...{'variant':node.variant ?? 'shortText','label':node.label},
+      if(node.kind=='Row'||node.kind=='Column') ...{'justify':styles[node.justify],'align':styles[node.align]},
+      'children':node.kind=='TextField' ? const [] : node.children.map(tree).toList()
+    };
+    final steps=jsonDecode(File('test/fixtures/variants.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();
+    for(final step in steps){store.apply(step['message']);final root=store.snapshot().single;expect(root==null?null:tree(root),step['tree']);}
+    // Button variants are accepted and kept by the store; no adapter draws them differently.
+    expect(store.snapshot().single!.children.where((node)=>node.kind=='Button').map((node)=>node.variant).toList(),['default','primary','borderless',null]);
+  });
+
+  test('shared text field fixture matches the expected field and bound text after updates and typing', () {
+    final steps=jsonDecode(File('test/fixtures/text-field.json').readAsStringSync()) as List;
+    final store=FlutterSurfaceStore();
+    for(final step in steps){
+      if(step.containsKey('message')){store.apply(step['message']);}else{store.writeField('main','field',store.views().single.revision,step['input'] as String);}
+      final root=store.snapshot().single, field=root?.children[0];
+      expect({'field':root==null?null:{'label':field!.label,'value':field.value,'variant':field.variant},'text':root?.children[1].text},{'field':step['field'],'text':step['text']});
+    }
+  });
+
   test('bounds and isolates data model updates', () {
     final store=FlutterSurfaceStore();
     store.apply(message('createSurface', {'surfaceId':'main','catalogId':appMixerCatalog}));
