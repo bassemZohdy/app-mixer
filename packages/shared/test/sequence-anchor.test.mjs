@@ -1,7 +1,7 @@
 // TASK-047.2.1: the anchor check every anchored store makes lives in @app-mixer/shared so the agent stores can use it without depending on core.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { advanceAnchor, checkAgainstAnchor, reportAnchorError } from '../dist/index.js';
+import { advanceAnchor, agentAnchorKey, checkAgainstAnchor, reportAnchorError } from '../dist/index.js';
 import * as core from '../../core/dist/file-sequence-anchor.js';
 
 const map = () => {
@@ -58,4 +58,13 @@ test('TASK-047.2.1 core re-exports the same functions, so its stores behave as b
   assert.equal(core.checkAgainstAnchor, checkAgainstAnchor);
   assert.equal(core.advanceAnchor, advanceAnchor);
   assert.equal(core.reportAnchorError, reportAnchorError);
+});
+
+test('TASK-047.2.2 the agent anchor key names a store and its scope, is stable and cannot collide across scopes', () => {
+  const key = agentAnchorKey('agent-runs', 'tenant', 'agent');
+  assert.match(key, /^agent-runs-[0-9a-f]{64}$/);
+  assert.equal(key, agentAnchorKey('agent-runs', 'tenant', 'agent'));
+  assert.notEqual(key, agentAnchorKey('agent-runs', 'tenant', 'other'));
+  assert.notEqual(key, agentAnchorKey('agent-memory', 'tenant', 'agent'));
+  assert.notEqual(agentAnchorKey('agent-runs', 'ab', 'c'), agentAnchorKey('agent-runs', 'a', 'bc'), 'the parts cannot be re-split');
 });

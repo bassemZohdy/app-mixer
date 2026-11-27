@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 // The check every anchored store makes before it answers, shared by the core and agent stores (TASK-047.2.1). The file-backed anchor
 // and the anchor keys stay in @app-mixer/core.
 /** A high-water mark held outside a database (an audit sequence or a revocation or approval epoch), so a restored database whose value went back is detected. */
@@ -44,3 +46,11 @@ export async function checkAgainstAnchor(options: {
   if (stored < (anchored as number)) throw Error(options.rolledBack);
   if (stored > (anchored as number)) await advanceAnchor(options.anchor, options.key, stored, options.onError);
 }
+
+/** The anchor key for one agent store's version stream: the store's kind and the parts of its scope, hashed so the name is safe in a file name and the parts cannot be re-split. */
+export const agentAnchorKey = (kind: string, ...scope: string[]): string =>
+  kind +
+  '-' +
+  createHash('sha256')
+    .update(scope.join(String.fromCharCode(0)))
+    .digest('hex');
