@@ -41,7 +41,7 @@ Evidence means a dated record that a reviewer can re-check: a CI run URL, a comm
 ### P2-05 Schema migration, rollback and promotion
 - **Verified locally:** immutable publication rollback, promotion with provenance and optimistic concurrency, bounded versioned data migrations, signed promotion artifacts, process-kill and cross-process race tests.
 - **Still to prove:**
-  - [ ] General schema evolution beyond the explicit 1-to-2 and 2-to-1 definition migrations.
+  - [x] General schema evolution beyond the explicit 1-to-2 and 2-to-1 definition migrations. Decided: no general migration registry; a draft moves one version at a time through explicit, tested paths, and the ADR lists the six places a schema version 3 touches and the order to ship it ([ADR 0012](adr/0012-definition-migrations-stay-explicit.md), 2026-11-26; [definition-migration.md](definition-migration.md)). The decision stands until a third version is proposed; the trigger to revisit is recorded in the ADR.
   - [ ] Larger and online migrations on a production-sized dataset with writers active.
   - [ ] Independent operation of the signing audit (separate trust domain from the signer).
   - [ ] Production authorization of promotion.

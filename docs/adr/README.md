@@ -18,5 +18,6 @@ Status meanings: **Accepted** means the product architecture direction was agree
 
 | [0010](0010-configurable-persistent-agents.md) | Accepted direction | Independent configurable persistent agents and durable activation/actions |
 | [0011](0011-core-depends-on-the-web-renderer.md) | Accepted | Core keeps its dependency on the web renderer; revisit before the first publish |
+| [0012](0012-definition-migrations-stay-explicit.md) | Accepted | Definition migrations stay explicit, one version at a time; no general migration registry, and how a version 3 ships |
 
 See [requirements](../specs/requirements.md), [architecture](../specs/architecture.md), [implementation plan](../specs/implementation-plan.md), [TODO](../../TODO.md), and [CHANGELOG](../../CHANGELOG.md).
