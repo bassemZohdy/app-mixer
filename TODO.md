@@ -103,9 +103,8 @@
   - [ ] **TASK-047.2** · high · Anchor the agent run and action journal stores as ADR 0014 decides
     - Done when: the run store and the action journal accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows a finished action is no longer dispatched again; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
     - State: branch todo/TASK-047.2-anchor-agent-run-action from todo/TASK-047-anchor-agent-stores-outside; next: build children
-    - [/] **TASK-047.2.1** · low · Move the anchor helper and type into @app-mixer/shared and re-export them from core
+    - [x] **TASK-047.2.1** · low · Move the anchor helper and type into @app-mixer/shared and re-export them from core
       - Done when: the helper and the AuditSequenceAnchor type are exported by @app-mixer/shared, core re-exports them with unchanged behaviour, and the agent package can import them; `node --test packages/core/test/audit-sequence-anchor.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/shared/test/sequence-anchor.test.mjs`
-      - State: attempts 0/3; baseline 2030 passing; branch todo/TASK-047.2.1-move-anchor-helper-type from todo/TASK-047.2-anchor-agent-run-action; next: read docs
     - [ ] **TASK-047.2.2** · high · Anchor the agent run store by a version drawn from a sequence on every change
       - Done when: a run store with an anchor refuses to answer after a restore until it is reconciled and an existing table gains its version column; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/agent/test/postgres-agent-runs-anchor.test.mjs`
     - [ ] **TASK-047.2.3** · high · Anchor the agent action journal on the same version stream as its run
