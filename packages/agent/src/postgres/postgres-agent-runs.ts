@@ -3,9 +3,17 @@ import { actionJSON, hadNoEffect, type AgentAction, type ActionVerification, typ
 import type { AgentRunScope, AgentRunStatus, DurableAgentRun } from '../runs/durable-runs.js';
 import { AgentError } from '../errors.js';
 import { isIdentifier, isNonNegativeInteger } from '../validation.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor, type AnchorErrorHandler, type AuditSequenceAnchor } from '@app-mixer/shared';
 
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
-export type PostgresAgentRunsOptions = { enabled: true; query: Query; transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T> };
+export type PostgresAgentRunsOptions = {
+  enabled: true;
+  query: Query;
+  transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
+  /** A high-water mark of the run version per tenant and agent, held outside the database (ADR 0014). */
+  versionAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
+};
 export type PostgresAgentRun = Omit<DurableAgentRun, 'delegationWait' | 'approvalWait'>;
 export type PostgresRunClaimLimits = { maxConcurrentRuns?: number; maxRunsPerDay?: number };
 
@@ -48,13 +56,53 @@ function parse(row: Record<string, unknown>): PostgresAgentRun {
  */
 export { NOW as POSTGRES_NOW };
 export type { Query as PostgresRunQuery };
+const versionSequence = 'app_mixer_agent_run_version';
 export class PostgresAgentRuns {
   private readonly query: Query;
   private readonly transaction: PostgresAgentRunsOptions['transaction'];
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
+  /** With an anchor every change draws a new version from the sequence in the same statement; without one the statements are unchanged. */
+  private readonly bump: string;
   constructor(options: PostgresAgentRunsOptions) {
-    if (!options || options.enabled !== true || typeof options.query !== 'function' || typeof options.transaction !== 'function') throw Error('Invalid agent run registry configuration');
+    if (
+      !options ||
+      options.enabled !== true ||
+      typeof options.query !== 'function' ||
+      typeof options.transaction !== 'function' ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
+    )
+      throw Error('Invalid agent run registry configuration');
     this.query = options.query;
     this.transaction = options.transaction;
+    this.anchor = options.versionAnchor;
+    this.onAnchorError = options.onAnchorError;
+    this.bump = this.anchor ? ",version=nextval('" + versionSequence + "')" : '';
+  }
+  /** Refuses to answer when the newest version in the database is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(tenantId: string, agentId: string): Promise<void> {
+    if (!this.anchor) return;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: agentAnchorKey('agent-runs', tenantId, agentId),
+      unavailable: 'Agent runs anchor unavailable',
+      rolledBack: 'Agent runs were rolled back',
+      onError: this.onAnchorError,
+      stored: async () => {
+        const result = await this.query('SELECT COALESCE(max(version),0) AS stored FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2', [tenantId, agentId]);
+        const stored = Number(result.rows?.[0]?.stored);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || !Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid run registry result');
+        return stored;
+      }
+    });
+  }
+  /** The change is committed; an anchor failure leaves the anchor behind until the next call catches it up. */
+  private async advance(tenantId: string, agentId: string, row: Record<string, unknown> | undefined): Promise<void> {
+    if (!this.anchor) return;
+    const version = Number(row?.version);
+    if (!Number.isSafeInteger(version) || version < 1) throw Error('Invalid run registry result');
+    await advanceAnchor(this.anchor, agentAnchorKey('agent-runs', tenantId, agentId), version, this.onAnchorError);
   }
   async initialize(): Promise<void> {
     // Schema version of this component: refuse a database written by a newer release, record this layout (2: queue order sequence) once migrated.
@@ -110,6 +158,12 @@ export class PostgresAgentRuns {
     await this.query('ALTER TABLE app_mixer_agent_runs ADD COLUMN IF NOT EXISTS sequence BIGINT GENERATED ALWAYS AS IDENTITY', []);
     await this.query("CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_queue ON app_mixer_agent_runs(tenant_id,agent_id,sequence) WHERE status='queued' AND NOT archived", []);
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_status ON app_mixer_agent_runs(tenant_id,agent_id,status,archived,run_id)', []);
+    if (this.anchor) {
+      // A database that already holds runs gains the version column; its rows draw their versions from the sequence.
+      await this.query('CREATE SEQUENCE IF NOT EXISTS ' + versionSequence, []);
+      await this.query("ALTER TABLE app_mixer_agent_runs ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT nextval('" + versionSequence + "')", []);
+      await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_newest ON app_mixer_agent_runs(tenant_id,agent_id,version)', []);
+    }
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
     await this.query(
       'CREATE TABLE IF NOT EXISTS app_mixer_agent_run_first_starts (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,run_id TEXT NOT NULL,started_at BIGINT NOT NULL,PRIMARY KEY(tenant_id,agent_id,' +
@@ -248,6 +302,7 @@ export class PostgresAgentRuns {
   }
   async get(scope: AgentRunScope, runId: string): Promise<PostgresAgentRun | undefined> {
     const { tenantId, agentId } = scopeKey(scope, runId);
+    await this.checkAnchor(tenantId, agentId);
     const row = (await this.query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [tenantId, agentId, runId])).rows[0];
     return row ? parse(row) : undefined;
   }
@@ -256,6 +311,7 @@ export class PostgresAgentRuns {
     const { tenantId, agentId } = scopeKey(scope, runId);
     if (!config || !number(config.definitionVersion) || config.definitionVersion < 1 || !number(config.maxAttempts) || config.maxAttempts < 1 || config.maxAttempts > 100 || !number(config.deadline))
       throw Error('Invalid run configuration');
+    await this.checkAnchor(tenantId, agentId);
     return this.transaction(async query => {
       if (config.deadline <= (await databaseNow(query))) throw Error('Invalid run configuration');
       const inserted = await query("INSERT INTO app_mixer_agent_runs VALUES ($1,$2,$3,$4,1,'queued',0,$5,$6,NULL,NULL,NULL,false) ON CONFLICT DO NOTHING", [
@@ -267,13 +323,16 @@ export class PostgresAgentRuns {
         config.deadline
       ]);
       if (inserted.rowCount !== 1) throw Error('Run already exists');
-      return parse((await query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [tenantId, agentId, runId])).rows[0]!);
+      const created = (await query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [tenantId, agentId, runId])).rows[0]!;
+      await this.advance(tenantId, agentId, created);
+      return parse(created);
     });
   }
   /** Queued runs, oldest ID first (bounded). */
   async queued(scope: AgentRunScope, limit = 50): Promise<PostgresAgentRun[]> {
     const { tenantId, agentId } = scopeKey(scope, 'validation');
     if (!number(limit) || limit < 1 || limit > 100) throw Error('Invalid run query');
+    await this.checkAnchor(tenantId, agentId);
     return (
       await this.query("SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND status='queued' AND NOT archived ORDER BY sequence LIMIT $3", [tenantId, agentId, limit])
     ).rows.map(parse);
@@ -282,6 +341,7 @@ export class PostgresAgentRuns {
   async expiredLeases(scope: AgentRunScope, limit = 50, graceMs = 0): Promise<PostgresAgentRun[]> {
     const { tenantId, agentId } = scopeKey(scope, 'validation');
     if (!number(limit) || limit < 1 || limit > 100 || !number(graceMs) || graceMs > 86400000) throw Error('Invalid run query');
+    await this.checkAnchor(tenantId, agentId);
     return (
       await this.query(
         `SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND status IN ('running','pause_requested','cancel_requested') AND lease_until<=${NOW}-$4 ORDER BY run_id LIMIT $3`,
@@ -294,6 +354,7 @@ export class PostgresAgentRuns {
   async uncertain(scope: AgentRunScope, limit = 50, after?: string): Promise<PostgresAgentRun[]> {
     const { tenantId, agentId } = scopeKey(scope, 'validation');
     if (!number(limit) || limit < 1 || limit > 100 || (after !== undefined && !id(after))) throw Error('Invalid run query');
+    await this.checkAnchor(tenantId, agentId);
     return (
       await this.query("SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND status='uncertain' AND NOT archived AND ($4::text IS NULL OR run_id>$4) ORDER BY run_id LIMIT $3", [
         tenantId,
@@ -311,6 +372,7 @@ export class PostgresAgentRuns {
   ): Promise<PostgresAgentRun> {
     const { tenantId, agentId } = scopeKey(scope, runId);
     if (!number(expectedRevision) || expectedRevision < 1 || expectedRevision >= Number.MAX_SAFE_INTEGER) throw Error('Invalid run revision');
+    await this.checkAnchor(tenantId, agentId);
     return this.transaction(async query => {
       const row = (await query('SELECT * FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 FOR UPDATE', [tenantId, agentId, runId])).rows[0];
       if (!row) throw Error('Run not found');
@@ -319,18 +381,14 @@ export class PostgresAgentRuns {
       if (run.archived) throw Error('Run is archived');
       await change(run, await databaseNow(query), query);
       run.revision++;
-      await query('UPDATE app_mixer_agent_runs SET revision=$4,status=$5,attempts=$6,lease_owner=$7,lease_token=$8,lease_until=$9,archived=$10 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3', [
-        tenantId,
-        agentId,
-        runId,
-        run.revision,
-        run.status,
-        run.attempts,
-        run.leaseOwner,
-        run.leaseToken,
-        run.leaseUntil,
-        run.archived
-      ]);
+      const updated = await query(
+        'UPDATE app_mixer_agent_runs SET revision=$4,status=$5,attempts=$6,lease_owner=$7,lease_token=$8,lease_until=$9,archived=$10' +
+          this.bump +
+          ' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3' +
+          (this.anchor ? ' RETURNING version' : ''),
+        [tenantId, agentId, runId, run.revision, run.status, run.attempts, run.leaseOwner, run.leaseToken, run.leaseUntil, run.archived]
+      );
+      await this.advance(tenantId, agentId, updated.rows[0]);
       return run;
     });
   }
