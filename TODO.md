@@ -108,8 +108,7 @@
   - State: branch todo/TASK-052-decide-build-rollback-anchors from main; next: build children
   - [x] **TASK-052.1** · mid · Anchor PostgresOfflineRecovery by its event id (ADR 0013, decision 4)
     - Done when: a recovery store with an anchor refuses to answer after a restore until the anchor is reconciled, shown in the restore test; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/core/test/postgres-offline-recovery.test.mjs`
-  - [/] **TASK-052.2** · high · Anchor PostgresOfflineExecutions by a version sequence (ADR 0013, decision 3)
+  - [x] **TASK-052.2** · high · Anchor PostgresOfflineExecutions by a version sequence (ADR 0013, decision 3)
     - Done when: an executions store with an anchor refuses to answer after a restore until the anchor is reconciled and an existing table gains its version column, shown in the restore test; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/core/test/postgres-offline-executions.test.mjs`
-    - State: attempts 0/3; baseline 2027 passing; branch todo/TASK-052.2-anchor-postgresofflineexecutions-by-version from todo/TASK-052-decide-build-rollback-anchors; next: build
   - [ ] **TASK-052.3** · low · Teach anchor-admin the two key kinds, accept ADR 0013 and bring the docs in line
     - Done when: docs/kubernetes-data-plane.md, the P3-03 and P3-04 boxes and the ADR table state the new anchors and ADR 0013 is Accepted; `node --test packages/cli/test/process-files.test.mjs`

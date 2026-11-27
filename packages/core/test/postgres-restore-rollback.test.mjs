@@ -95,6 +95,8 @@ test(
         slots = new PostgresOfflineSlots({ query, requestKeys: keys }),
         executions = new PostgresOfflineExecutions({ query, requestKeys: keys }),
         recovery = new PostgresOfflineRecovery({ query, authorize: () => true, clock: () => now }),
+        // TASK-052.2: the same store with a version anchor held outside the database (ADR 0013).
+        anchoredExecutions = new PostgresOfflineExecutions({ query, requestKeys: keys, versionAnchor: mapAnchor }),
         // TASK-052.1: the same store with an event anchor held outside the database (ADR 0013).
         anchoredRecovery = new PostgresOfflineRecovery({ query, authorize: () => true, clock: () => now, eventAnchor: mapAnchor }),
         operator = { tenantId: 'tenant', principalId: 'operator' },
@@ -125,6 +127,8 @@ test(
       );
       const uncertain = await executions.get(offlineScope, device, keyU);
       assert.equal(uncertain?.status, 'uncertain');
+      // TASK-052.2: a database that already holds executions gains the version column when the anchored store initializes.
+      await anchoredExecutions.initialize();
       await docker('exec', '-u', 'postgres', name, 'sh', '-c', 'pg_dump -U postgres -Fc app > /tmp/backup.dump');
       // State B: acknowledged after the backup.
       await anchoredRevocations.revoke('revoked-after-backup', now + 3600000);
@@ -134,7 +138,7 @@ test(
       // State B, offline: a new request key is issued and executed, the ambiguous outcome is reconciled as not applied, and the slot is reset.
       const keyB = await keys.allocate(offlineScope, device, 'save', 'request-b', payload),
         slotKeyB = await slots.reset(offlineScope, device, 'form-1', slotKeyA);
-      assert.deepEqual(await executions.execute(offlineScope, device, 'save', payload, keyB, dispatch), { ok: 1 });
+      assert.deepEqual(await anchoredExecutions.execute(offlineScope, device, 'save', payload, keyB, dispatch), { ok: 1 });
       await anchoredRecovery.reconcile(
         operator,
         { scope: offlineScope, principalId: device, idempotencyKey: keyU },
@@ -190,6 +194,10 @@ test(
       await assert.rejects(anchoredApprovals.isAllowed(admin, approvalScope, reference, operation), /Extension approvals were rolled back/);
       // The audit sink with an outside high-water mark also refuses: recording would have reused sequence 4.
       await assert.rejects(anchoredAudit.record(event(6)), /Audit log was rolled back/);
+      // TASK-052.2: with a version anchor the executions store refuses instead of forgetting the execution and letting a device run it again.
+      await assert.rejects(anchoredExecutions.get(offlineScope, device, keyB), /Offline executions were rolled back/);
+      await assert.rejects(anchoredExecutions.execute(offlineScope, device, 'save', payload, keyA, dispatch), /Offline executions were rolled back/);
+      assert.equal(dispatches, 2, 'the refused call dispatched nothing');
       // TASK-052.1: with an event anchor the recovery store refuses instead of letting the uncertain outcome be reconciled again unseen.
       const recoveryTarget = { scope: offlineScope, principalId: device, idempotencyKey: keyU };
       await assert.rejects(anchoredRecovery.history(operator, recoveryTarget), /Offline recovery was rolled back/);
