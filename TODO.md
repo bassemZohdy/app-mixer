@@ -39,9 +39,9 @@
 - [ ] **TASK-028** · P2 · mid · Close the schema migration, rollback and promotion evidence gaps (legacy P2-05)
   - Done when: every Still-to-prove box of P2-05 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - In repo: done: TASK-045 (ADR 0012 refuses a general definition-migration registry and records how a version 3 ships; the P2-05 box is checked) and TASK-046 (the signing audit operated from a trust domain separate from the signer)
+  - In repo: done: TASK-045 (ADR 0012 refuses a general definition-migration registry and records how a version 3 ships) and TASK-046 (`PostgresPromotionSigningAudit` with an operator credential, an append-only service role and a key holder refused; both P2-05 boxes are checked)
   - Blocked on: production; an online migration on a production-sized dataset with writers active, and production authorization of promotion
-  - State: next: TASK-046
+  - State: next: the two production boxes
 
 - [ ] **TASK-029** · P2 · mid · Close the persistent-agent entity and manifest evidence gaps (legacy P2-06)
   - Done when: every Still-to-prove box of P2-06 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
@@ -134,11 +134,6 @@
   - Done when: every store under packages/web/src accepts a `rollbackAnchor` as EncryptedBrowserQueue, EncryptedPublicationCache, the persistent request keys and the shared identity store do, or its documentation names why it cannot; a record deleted or swapped for an older version inside one partition is detected on the next open or write; tests under packages/web/test cover both; the P2-04 box in docs/acceptance-checklists.md cites them
   - Links: Ref: docs/offline-queue.md#rollback-anchor · From: TASK-027 · Lane: main
   - State: next: list the stores under packages/web/src and which accept an anchor
-
-- [ ] **TASK-046** · P2 · mid · Operate the promotion signing audit from a trust domain separate from the signer
-  - Done when: a signer holding only its signing key can neither write nor alter nor drop the entries that record its signatures: the audit store takes a credential the signer does not have, a test under packages/core/test shows a signer without it refused, docs/environment-promotion.md#signing-audit describes the separated operation, and the P2-05 box cites it
-  - Links: Ref: docs/environment-promotion.md#signing-audit · From: TASK-028 · Lane: main
-  - State: next: decide the audit's credential boundary in docs/environment-promotion.md, then the test
 
 - [ ] **TASK-047** · P3 · large · Anchor the agent stores outside their database, as the Data Plane stores already are
   - Done when: every PostgreSQL store under packages/agent/src/postgres that records security or money state (definitions, runs, the action journal, memory, approvals, delegations and the cost budget) accepts an anchor as PostgresJwtRevocations and PostgresPublicationReleaseRegistry do (docs/kubernetes-data-plane.md, Anchors), or its documentation names why it cannot; packages/core/test/postgres-restore-rollback.test.mjs covers each one and shows a restore refused until the anchor is reconciled; the sentence in docs/kubernetes-data-plane.md#restoring-an-older-backup that only the connector's promotion floor can be anchored is brought in line with the anchors the stores accept; the P3-03 and P3-04 rollback boxes cite the test
