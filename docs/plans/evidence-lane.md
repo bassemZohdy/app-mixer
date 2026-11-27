@@ -20,7 +20,7 @@ Detail moved out of `TODO.md` so each task stays within the 4-line schema. Each 
 ## TASK-027
 
 - Checked with evidence: the migration of clients older than the IndexedDB version fence (offline-legacy-clients.test.mjs)
-- In repo: done: TASK-044 (the browser-side stores are inventoried in docs/offline-queue.md#rollback-anchor; both web stores bind a partition digest into anchored v2 counters and detect deletion and substitution on the next open, read or write; the P2-04 box is checked) and TASK-051 (the restore test characterizes the four PostgreSQL offline stores: every acknowledgement given after the backup is undone without detection); next: TASK-052 (decide anchors for those stores)
+- In repo: done: TASK-044 (the browser-side stores are inventoried in docs/offline-queue.md#rollback-anchor; both web stores bind a partition digest into anchored v2 counters and detect deletion and substitution on the next open, read or write; the P2-04 box is checked) and TASK-051 (the restore test characterizes the four PostgreSQL offline stores: every acknowledgement given after the backup is undone without detection); and TASK-052 (ADR 0013 anchors the executions and recovery stores; request keys and slots stay unanchored on purpose)
 - Blocked on: a device for offline provisioning of a never-online device; iOS and Android devices for storage under eviction and backup/restore; production identity for shared request keys
 
 ## TASK-028

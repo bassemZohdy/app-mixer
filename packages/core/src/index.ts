@@ -566,6 +566,8 @@ export {
   authenticationFailureAnchorKey,
   jwtRevocationAnchorKey,
   extensionApprovalAnchorKey,
+  offlineRecoveryAnchorKey,
+  offlineExecutionAnchorKey,
   releaseFloorAnchorKey
 } from './file-sequence-anchor.js';
 export type { AuditSequenceAnchor, AnchorErrorHandler } from './file-sequence-anchor.js';
