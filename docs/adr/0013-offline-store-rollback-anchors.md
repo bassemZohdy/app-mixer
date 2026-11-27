@@ -48,6 +48,8 @@ The four stores differ in what a rewind costs:
   then lowers the anchor. An execution that cannot be verified stays uncertain.
 - Every execution costs one anchor write per state change. The anchor is a file on storage a restore cannot reach.
 - The check assumes a restore of the whole database. A restore of single tables is not detected.
+- The check also assumes rows are never deleted. No code here deletes from either table; an operator who prunes the newest
+  rows must lower the anchor to match, or the store refuses.
 
 ## Alternatives refused
 - A per-application epoch row bumped in each statement, as for revocations. It serialises every submission of an application.
