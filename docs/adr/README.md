@@ -20,5 +20,6 @@ Status meanings: **Accepted** means the product architecture direction was agree
 | [0011](0011-core-depends-on-the-web-renderer.md) | Accepted | Core keeps its dependency on the web renderer; revisit before the first publish |
 | [0012](0012-definition-migrations-stay-explicit.md) | Accepted | Definition migrations stay explicit, one version at a time; no general migration registry, and how a version 3 ships |
 | [0013](0013-offline-store-rollback-anchors.md) | Accepted | Anchor the offline executions and recovery stores; request keys and slots stay unanchored, with the reasons |
+| [0014](0014-agent-store-rollback-anchors.md) | Proposed | Anchor the agent stores that record security, effect or money state; none stays unanchored |
 
 See [requirements](../specs/requirements.md), [architecture](../specs/architecture.md), [implementation plan](../specs/implementation-plan.md), [TODO](../../TODO.md), and [CHANGELOG](../../CHANGELOG.md).
