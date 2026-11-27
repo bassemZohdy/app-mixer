@@ -46,6 +46,7 @@ jobs:
           node --test --test-concurrency=2
           packages/agent/test/postgres-*-foundation.test.mjs
           packages/agent/test/postgres-*-integration.test.mjs
+          packages/agent/test/postgres-agent-*-anchor.test.mjs
           packages/agent/test/postgres-action-recovery-worker.test.mjs
           packages/agent/test/postgres-lease-recovery-worker.test.mjs
           packages/agent/test/postgres-recovery-history-migration.test.mjs

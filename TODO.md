@@ -81,17 +81,14 @@
   - Done when: every Still-to-prove box of P3-05 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-038 · Lane: evidence
   - State: next: the production identity provider
-
 - [ ] **TASK-039** · P2 · mid · Close the durable human approval and consent evidence gaps (legacy P3-06)
   - Done when: every Still-to-prove box of P3-06 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-039 · Lane: evidence
   - State: next: the production notice channel
-
 - [ ] **TASK-040** · P2 · mid · Close the agent trace, metrics, quota and operational control evidence gaps (legacy P3-07)
   - Done when: every Still-to-prove box of P3-07 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-040 · Lane: evidence
   - State: next: the production provider list
-
 - [ ] **TASK-041** · P2 · mid · Close the durable-store portability and tenant-isolation acceptance evidence gaps (legacy P3-08)
   - Done when: every Still-to-prove box of P3-08 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-041 · Lane: evidence
@@ -103,13 +100,13 @@
   - State: branch todo/TASK-047-anchor-agent-stores-outside from main; next: build children
   - [x] **TASK-047.1** · mid · Characterize the agent stores under a restored backup and decide in ADR 0014 which take an anchor
     - Done when: the restore test records what a restored older backup undoes for each agent store of TASK-047, and ADR 0014 decides per store whether it takes an anchor or why it cannot; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
-  - [ ] **TASK-047.2** · high · Anchor the agent run and action journal stores as ADR 0014 decides
+  - [x] **TASK-047.2** · high · Anchor the agent run and action journal stores as ADR 0014 decides
     - Done when: the run store and the action journal accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows a finished action is no longer dispatched again; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
-    - [ ] **TASK-047.2.1** · low · Move the anchor helper and type into @app-mixer/shared and re-export them from core
+    - [x] **TASK-047.2.1** · low · Move the anchor helper and type into @app-mixer/shared and re-export them from core
       - Done when: the helper and the AuditSequenceAnchor type are exported by @app-mixer/shared, core re-exports them with unchanged behaviour, and the agent package can import them; `node --test packages/core/test/audit-sequence-anchor.test.mjs packages/core/test/store-epoch-anchors.test.mjs packages/shared/test/sequence-anchor.test.mjs`
-    - [ ] **TASK-047.2.2** · high · Anchor the agent run store by a version drawn from a sequence on every change
+    - [x] **TASK-047.2.2** · high · Anchor the agent run store by a version drawn from a sequence on every change
       - Done when: a run store with an anchor refuses to answer after a restore until it is reconciled and an existing table gains its version column; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/agent/test/postgres-agent-runs-anchor.test.mjs`
-    - [ ] **TASK-047.2.3** · high · Anchor the agent action journal on the same version stream as its run
+    - [x] **TASK-047.2.3** · high · Anchor the agent action journal on the same version stream as its run
       - Done when: an action journal with an anchor refuses after a restore, so a finished action is not dispatched again; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/agent/test/postgres-agent-actions-anchor.test.mjs`
   - [ ] **TASK-047.3** · high · Anchor the agent definition and memory stores as ADR 0014 decides
     - Done when: the definition and memory stores accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows the older definition and the erased memory are refused; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
