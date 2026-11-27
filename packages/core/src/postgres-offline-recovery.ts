@@ -1,11 +1,20 @@
 import { checkKey, dataCopy, type DataScope } from './data-provider.js';
 import type { PostgresJwtRevocationQuery } from './postgres-jwt-revocations.js';
 import { isNonNegativeInteger } from './validation.js';
+import { offlineRecoveryAnchorKey, checkAgainstAnchor, advanceAnchor } from './file-sequence-anchor.js';
+import type { AuditSequenceAnchor, AnchorErrorHandler } from './file-sequence-anchor.js';
 
 type Actor = { tenantId: string; principalId: string };
 type Target = { scope: DataScope; principalId: string; idempotencyKey: string };
 type Action = 'mark_uncertain' | 'reconcile' | 'history';
-type Options = { query: PostgresJwtRevocationQuery; authorize: (actor: Actor, target: Target, action: Action) => boolean | Promise<boolean>; clock?: () => number };
+type Options = {
+  query: PostgresJwtRevocationQuery;
+  authorize: (actor: Actor, target: Target, action: Action) => boolean | Promise<boolean>;
+  clock?: () => number;
+  /** A high-water mark of the event id per tenant and application, held outside the database (ADR 0013). */
+  eventAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
+};
 export type OfflineRecoveryEvent = {
   id: number;
   actorId: string;
@@ -24,9 +33,20 @@ export class PostgresOfflineRecovery {
   private readonly query: PostgresJwtRevocationQuery;
   private readonly authorize: Options['authorize'];
   private readonly clock: () => number;
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
   constructor(options: Options) {
-    if (!options || typeof options.query !== 'function' || typeof options.authorize !== 'function' || (options.clock !== undefined && typeof options.clock !== 'function'))
+    if (
+      !options ||
+      typeof options.query !== 'function' ||
+      typeof options.authorize !== 'function' ||
+      (options.clock !== undefined && typeof options.clock !== 'function') ||
+      (options.eventAnchor !== undefined && (!options.eventAnchor || typeof options.eventAnchor.read !== 'function' || typeof options.eventAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
+    )
       throw Error('Invalid offline recovery configuration');
+    this.anchor = options.eventAnchor;
+    this.onAnchorError = options.onAnchorError;
     this.query = options.query;
     this.authorize = options.authorize;
     this.clock = options.clock ?? Date.now;
@@ -77,6 +97,8 @@ export class PostgresOfflineRecovery {
       []
     );
     await this.query('CREATE INDEX IF NOT EXISTS app_mixer_offline_recovery_scope ON app_mixer_offline_recovery_events (tenant_id,application_id,principal_id,idempotency_key,id)', []);
+    // The anchor check reads the newest event id of a tenant and application.
+    await this.query('CREATE INDEX IF NOT EXISTS app_mixer_offline_recovery_newest ON app_mixer_offline_recovery_events (tenant_id,application_id,id)', []);
   }
   private snapshot(actor: Actor, target: Target): { actor: Actor; target: Target; args: [string, string, string, string] } {
     if (!actor || !target || !target.scope || actor.tenantId !== target.scope.tenantId) throw Error('Invalid offline recovery scope');
@@ -91,20 +113,44 @@ export class PostgresOfflineRecovery {
   private async permit(actor: Actor, target: Target, action: Action): Promise<void> {
     if ((await this.authorize({ ...actor }, { ...target, scope: { ...target.scope } }, action)) !== true) throw Error('Offline recovery forbidden');
   }
+  /** Refuses to answer when the newest event id in the database is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(target: Target): Promise<void> {
+    if (!this.anchor) return;
+    const { tenantId, applicationId } = target.scope;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: offlineRecoveryAnchorKey(tenantId, applicationId),
+      unavailable: 'Offline recovery anchor unavailable',
+      rolledBack: 'Offline recovery was rolled back',
+      onError: this.onAnchorError,
+      stored: async () => {
+        const result = await this.query('SELECT COALESCE(max(id),0) AS stored FROM app_mixer_offline_recovery_events WHERE tenant_id=$1 AND application_id=$2', [tenantId, applicationId]);
+        const stored = Number(result.rows?.[0]?.stored);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || !Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid offline recovery result');
+        return stored;
+      }
+    });
+  }
   private now(): number {
     const now = this.clock();
     if (!integer(now)) throw Error('Invalid clock');
     return now;
   }
-  private checked(result: { rows: Record<string, unknown>[] }, attemptToken: string): void {
+  private checked(result: { rows: Record<string, unknown>[] }, attemptToken: string): number {
     if (!Array.isArray(result.rows) || result.rows.length !== 1 || result.rows[0]!.attempt_token !== attemptToken || !integer(Number(result.rows[0]!.id)) || Number(result.rows[0]!.id) < 1)
       throw Error('Offline recovery state changed');
+    return Number(result.rows[0]!.id);
+  }
+  /** The event is committed; an anchor failure leaves the anchor behind until the next call catches it up. */
+  private async advance(target: Target, id: number): Promise<void> {
+    if (this.anchor) await advanceAnchor(this.anchor, offlineRecoveryAnchorKey(target.scope.tenantId, target.scope.applicationId), id, this.onAnchorError);
   }
   /** The host must establish that the old dispatcher cannot still act. */
   async markUncertain(actor: Actor, target: Target, attemptToken: string, evidence: string): Promise<void> {
     const c = this.snapshot(actor, target);
     if (!uuid(attemptToken) || !reference(evidence)) throw Error('Invalid offline recovery evidence');
     await this.permit(c.actor, c.target, 'mark_uncertain');
+    await this.checkAnchor(c.target);
     const now = this.now();
     const result = await this.query(
       "WITH changed AS (UPDATE app_mixer_offline_executions SET status='uncertain' WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 AND attempt_token=$5 AND " +
@@ -150,7 +196,7 @@ export class PostgresOfflineRecovery {
         "recorded_at) SELECT $1,$2,$3,$4,attempt_token,$6,'mark_uncertain',$7,$8 FROM changed RETURNING id,attempt_token",
       [...c.args, attemptToken, c.actor.principalId, evidence, now]
     );
-    this.checked(result, attemptToken);
+    await this.advance(c.target, this.checked(result, attemptToken));
   }
   /** The host must independently establish the provider outcome. */
   async reconcile(actor: Actor, target: Target, attemptToken: string, decision: { outcome: 'applied'; result: unknown } | { outcome: 'not_applied' }, evidence: string): Promise<void> {
@@ -161,6 +207,7 @@ export class PostgresOfflineRecovery {
       serialized = outcome === 'applied' ? JSON.stringify(dataCopy({ value: decision.result }).value) : null,
       event = outcome === 'applied' ? 'reconciled_applied' : 'reconciled_not_applied';
     await this.permit(c.actor, c.target, 'reconcile');
+    await this.checkAnchor(c.target);
     const now = this.now();
     const result = await this.query(
       'WITH changed AS (UPDATE app_mixer_offline_executions SET status=$6,' +
@@ -206,7 +253,7 @@ export class PostgresOfflineRecovery {
         '$11 FROM changed RETURNING id,attempt_token',
       [...c.args, attemptToken, status, serialized, c.actor.principalId, event, evidence, now]
     );
-    this.checked(result, attemptToken);
+    await this.advance(c.target, this.checked(result, attemptToken));
   }
   async history(actor: Actor, target: Target, options: { after?: number; limit?: number } = {}): Promise<{ items: OfflineRecoveryEvent[]; nextAfter?: number }> {
     const c = this.snapshot(actor, target),
@@ -214,6 +261,7 @@ export class PostgresOfflineRecovery {
       limit = options?.limit ?? 50;
     if (!options || !integer(after) || !integer(limit) || limit < 1 || limit > 100) throw Error('Invalid offline recovery history');
     await this.permit(c.actor, c.target, 'history');
+    await this.checkAnchor(c.target);
     const result = await this.query(
       'SELECT id,actor_id,attempt_token,action,reference,recorded_at FROM app_mixer_offline_recovery_events WHERE tenant_id=$1 AND application_id=$2 AND principal_id=$3 AND idempotency_key=$4 ' +
         '' +
