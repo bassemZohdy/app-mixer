@@ -110,7 +110,7 @@
       - Done when: an action journal with an anchor refuses after a restore, so a finished action is not dispatched again; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/agent/test/postgres-agent-actions-anchor.test.mjs`
   - [x] **TASK-047.3** · high · Anchor the agent definition and memory stores as ADR 0014 decides
     - Done when: the definition and memory stores accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows the older definition and the erased memory are refused; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
-  - [ ] **TASK-047.4** · high · Anchor the agent approval, delegation and cost budget stores as ADR 0014 decides
+  - [x] **TASK-047.4** · high · Anchor the agent approval, delegation and cost budget stores as ADR 0014 decides
     - Done when: the approval, delegation and cost budget stores accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows a revoked delegation stays revoked; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
   - [ ] **TASK-047.5** · low · Teach anchor-admin the agent anchor key kinds and bring the docs and the P3-03 and P3-04 boxes in line
     - Done when: docs/kubernetes-data-plane.md#restoring-an-older-backup, the P3-03 and P3-04 rollback boxes and ADR 0014 name the anchors the agent stores accept; `node --test packages/cli/test/process-files.test.mjs packages/cli/test/anchor-admin.test.mjs`
