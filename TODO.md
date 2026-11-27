@@ -32,9 +32,9 @@
   - Done when: every Still-to-prove box of P2-04 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
   - Checked with evidence: the migration of clients older than the IndexedDB version fence (offline-legacy-clients.test.mjs)
-  - In repo: done: TASK-044 (the browser-side stores are inventoried in docs/offline-queue.md#rollback-anchor; both web stores bind a partition digest into anchored v2 counters and detect deletion and substitution on the next open, read or write; the P2-04 box is checked)
+  - In repo: done: TASK-044 (the browser-side stores are inventoried in docs/offline-queue.md#rollback-anchor; both web stores bind a partition digest into anchored v2 counters and detect deletion and substitution on the next open, read or write; the P2-04 box is checked) and TASK-051 (the restore test characterizes the four PostgreSQL offline stores: every acknowledgement given after the backup is undone without detection); next: TASK-052 (decide anchors for those stores)
   - Blocked on: a device for offline provisioning of a never-online device; iOS and Android devices for storage under eviction and backup/restore; production identity for shared request keys
-  - State: next: TASK-044
+  - State: next: TASK-052; the device and identity boxes wait for the devices and the production identity
 
 - [ ] **TASK-028** · P2 · mid · Close the schema migration, rollback and promotion evidence gaps (legacy P2-05)
   - Done when: every Still-to-prove box of P2-05 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
@@ -135,7 +135,7 @@
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
 
-- [ ] **TASK-051** · P3 · small · Characterize the PostgreSQL offline stores under a restored older backup
-  - Done when: packages/core/test/postgres-restore-rollback.test.mjs extends its table to PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions and PostgresOfflineRecovery (what each acknowledges after the backup and what a restore undoes, for example a retired request key or a finished execution becoming pending again); docs/kubernetes-data-plane.md#restoring-an-older-backup lists the result; if a store rewinds undetected in a way that matters, the P3-03 and P3-04 rollback boxes name it and a follow-up decides an anchor as TASK-047 does for the agent stores; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs` passes
+- [ ] **TASK-052** · P3 · mid · Decide and build rollback anchors for the PostgreSQL offline stores, as TASK-047 does for the agent stores
+  - Done when: an ADR under docs/adr decides whether PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions and PostgresOfflineRecovery accept an anchor (an epoch or high-water mark held outside their database, as PostgresJwtRevocations and PostgresExtensionApprovals do through file-sequence-anchor.ts) or document why they cannot; if accepted, each store refuses to answer after a restore until its anchor is reconciled, and packages/core/test/postgres-restore-rollback.test.mjs shows the refusal for each; the offline rows in docs/kubernetes-data-plane.md#restoring-an-older-backup and the P3-03 and P3-04 rollback boxes are brought in line; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs` passes
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-027 · Lane: main
-  - State: next: read how the restore test builds its table and add the four stores
+  - State: next: read how PostgresJwtRevocations checks and advances its epoch anchor, then write the ADR

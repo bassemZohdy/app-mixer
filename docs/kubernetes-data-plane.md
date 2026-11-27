@@ -159,6 +159,12 @@ The admission example allows the setting only as `/floor-anchor`, only together 
 | Release floor | A raised floor | Back at the old value, so a release below the new floor is allowed again |
 | Extension approvals | An approval revoked after the backup | Granted again |
 | Capability audit log | Two events | Gone, and the next event reuses sequence 4 with no sign of the gap |
+| Offline request keys (`PostgresOfflineRequestKeys`) | A request key issued to a device after the backup | Unknown again: the device's submission is refused, and a retry starts a new request |
+| Offline executions (`PostgresOfflineExecutions`) | An execution that completed after the backup | Forgotten. Replaying its key is refused, because the key is gone too, rather than executed twice; a device that starts over runs the operation again |
+| Offline recovery evidence (`PostgresOfflineRecovery`) | An uncertain outcome reconciled after the backup | Uncertain again, with no evidence event, so a later reconciliation can repeat or dismiss it |
+| Offline slots (`PostgresOfflineSlots`) | A slot reset after the backup | Undone: the request key the reset retired is valid again |
+
+An execution completed before the backup still deduplicates after the restore, so the loss is confined to what was acknowledged after it. The offline rows were added on 2026-11-26 (TASK-051); the offline stores keep no anchor, and deciding one for them is TASK-052, as TASK-047 does for the agent stores.
 
 Treat a restore as a security event, not only a data event. These steps are guidance and are not tested here: before accepting traffic again, raise the release floor to the last value in the release journal, re-apply the revocations and approval revocations recorded since the backup (from the identity provider, the change record or the log of the stopped primary), force re-issuance of tokens issued before the restore, and record the restore and its time window in your audit trail. Prefer point-in-time recovery to the latest consistent point over restoring an old snapshot, and prefer failover to a synchronous standby (see the failover drill) over restoring a backup at all. Only the remote connector's promotion floor can be anchored outside the target database today; the stores above have no independent anchor, which is why the P3-03 and P3-04 rollback-protection items stay open.
 
