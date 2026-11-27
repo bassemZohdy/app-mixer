@@ -25,7 +25,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "0.301.2",
     "@opentelemetry/resources": "3.1.1",
     "@opentelemetry/sdk-trace": "3.1.1",
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.6.7",
     "fake-indexeddb": "^6.2.8",
     "jsdom": "^31.0.1",
     "typescript": "^5.9.3"
