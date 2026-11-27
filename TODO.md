@@ -32,7 +32,7 @@
   - Done when: every Still-to-prove box of P2-04 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
   - Checked with evidence: the migration of clients older than the IndexedDB version fence (offline-legacy-clients.test.mjs)
-  - In repo: TASK-044 (rollback anchors for the offline stores without one, and selective-tampering detection)
+  - In repo: done: TASK-044 (the browser-side stores are inventoried in docs/offline-queue.md#rollback-anchor; both web stores bind a partition digest into anchored v2 counters and detect deletion and substitution on the next open, read or write; the P2-04 box is checked)
   - Blocked on: a device for offline provisioning of a never-online device; iOS and Android devices for storage under eviction and backup/restore; production identity for shared request keys
   - State: next: TASK-044
 
@@ -130,12 +130,12 @@
   - Blocked on: production; managed stores, a node taken down in production, a real network partition between a node and the database, and an arm64 node pool
   - State: next: the production stores
 
-- [ ] **TASK-044** · P2 · mid · Rollback anchors for the offline stores without one, and detection of selective tampering
-  - Done when: every store under packages/web/src accepts a `rollbackAnchor` as EncryptedBrowserQueue, EncryptedPublicationCache, the persistent request keys and the shared identity store do, or its documentation names why it cannot; a record deleted or swapped for an older version inside one partition is detected on the next open or write; tests under packages/web/test cover both; the P2-04 box in docs/acceptance-checklists.md cites them
-  - Links: Ref: docs/offline-queue.md#rollback-anchor · From: TASK-027 · Lane: main
-  - State: next: list the stores under packages/web/src and which accept an anchor
-
 - [ ] **TASK-047** · P3 · large · Anchor the agent stores outside their database, as the Data Plane stores already are
   - Done when: every PostgreSQL store under packages/agent/src/postgres that records security or money state (definitions, runs, the action journal, memory, approvals, delegations and the cost budget) accepts an anchor as PostgresJwtRevocations and PostgresPublicationReleaseRegistry do (docs/kubernetes-data-plane.md, Anchors), or its documentation names why it cannot; packages/core/test/postgres-restore-rollback.test.mjs covers each one and shows a restore refused until the anchor is reconciled; the sentence in docs/kubernetes-data-plane.md#restoring-an-older-backup that only the connector's promotion floor can be anchored is brought in line with the anchors the stores accept; the P3-03 and P3-04 rollback boxes cite the test
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
+
+- [ ] **TASK-051** · P3 · small · Characterize the PostgreSQL offline stores under a restored older backup
+  - Done when: packages/core/test/postgres-restore-rollback.test.mjs extends its table to PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions and PostgresOfflineRecovery (what each acknowledges after the backup and what a restore undoes, for example a retired request key or a finished execution becoming pending again); docs/kubernetes-data-plane.md#restoring-an-older-backup lists the result; if a store rewinds undetected in a way that matters, the P3-03 and P3-04 rollback boxes name it and a follow-up decides an anchor as TASK-047 does for the agent stores; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs` passes
+  - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-027 · Lane: main
+  - State: next: read how the restore test builds its table and add the four stores
