@@ -10,9 +10,9 @@
 - [ ] **TASK-024** · P2 · mid · Close the adapter and parity evidence gaps (legacy P2-01)
   - Done when: every Still-to-prove box of P2-01 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - In repo: done for the fixtures that web, React Native and Flutter share (`Progress` joined `layout.json`, TASK-042); the Angular DOM bridge runs none of the shared fixtures (TASK-049)
+  - In repo: every catalog component is in the shared fixtures (`Progress` joined `layout.json`, TASK-042) and the Angular DOM bridge replays all six of them in its CI smoke test (TASK-049); the Flutter renderer test replays four of the six (TASK-050)
   - Blocked on: Android and iOS devices for React Native tests beyond the nested-binding, rejection and bound-field-action cases; devices for Flutter layout, typography and accessibility parity against the web reference
-  - State: next: TASK-049; the two device boxes wait for the devices
+  - State: next: TASK-050; the two device boxes wait for the devices
 
 - [ ] **TASK-025** · P2 · mid · Close the extension SDK and compatibility manifest evidence gaps (legacy P2-02)
   - Done when: every Still-to-prove box of P2-02 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
@@ -155,7 +155,7 @@
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
 
-- [ ] **TASK-049** · P2 · mid · Run the shared layout fixture through the Angular DOM bridge
-  - Done when: `.github/scripts/angular-smoke.mjs` feeds every step of adapters/flutter/test/fixtures/layout.json to `A2UIComponent` in TestBed and checks the rendered DOM tree, normalised like `domTree` in packages/native/test/parity.test.mjs, against each step's `tree`; the `Angular AOT and lifecycle smoke test` CI step stays green; the P2-01 box in docs/acceptance-checklists.md cites it
-  - Links: Ref: docs/angular-adapter.md · From: TASK-024 · Lane: main
-  - State: next: share the DOM normalisation with parity.test.mjs instead of copying it
+- [ ] **TASK-050** · P2 · small · Replay the shared variants and text-field fixtures in the Flutter renderer test
+  - Done when: adapters/flutter/test/renderer_test.dart replays every step of adapters/flutter/test/fixtures/variants.json and text-field.json against `FlutterSurfaceStore`, as packages/native/test/parity.test.mjs does for the React Native store (a `tree()` shape that carries the Text, TextField and Button variants; `writeField` for the typed steps), and checks each step's `tree`, `field` and `text`; `flutter analyze` and `flutter test` pass in `ghcr.io/cirruslabs/flutter:3.35.5`; the P2-01 box in docs/acceptance-checklists.md cites them
+  - Links: Ref: docs/flutter-adapter.md · From: TASK-024 · Lane: main
+  - State: next: read how `NativeNode` exposes `variant`, `label` and `value`, then extend the layout test's `tree()` helper

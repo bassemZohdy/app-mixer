@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { NativeSurfaceStore, APP_MIXER_CATALOG } from '../dist/index.js';
 import { A2UIRenderer } from '../../web/dist/index.js';
+import { domTree, variantTree, textFieldState } from './support/web-dom.mjs';
 
 class Element {
   constructor(tag, doc) {
@@ -43,27 +44,6 @@ class Element {
   }
 }
 const doc = { createElement: tag => new Element(tag, doc) };
-const domTree = node => {
-  if (node.tagName === 'span' && !node.children.length && !node.textContent) return undefined;
-  // Progress renders as a label wrapping its text and a progress element; the value attribute is absent while the bar is indeterminate.
-  if (node.tagName === 'label' && node.children[1]?.tagName === 'progress') {
-    const bar = node.children[1];
-    return {
-      kind: 'Progress',
-      label: node.children[0].textContent,
-      value: bar.attributes.value === undefined ? null : Number(bar.attributes.value),
-      max: typeof bar.max === 'number' ? bar.max : Number(bar.attributes.max ?? 100),
-      children: []
-    };
-  }
-  const kind = node.tagName === 'section' ? 'Card' : node.tagName === 'div' ? (node.style.flexDirection === 'row' ? 'Row' : 'Column') : 'Text';
-  return {
-    kind,
-    ...(kind === 'Text' ? { text: node.textContent } : {}),
-    ...(kind === 'Row' || kind === 'Column' ? { justify: node.style.justifyContent ?? null, align: node.style.alignItems ?? null } : {}),
-    children: node.children.map(domTree).filter(Boolean)
-  };
-};
 const styleValues = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch', spaceBetween: 'space-between', spaceAround: 'space-around', spaceEvenly: 'space-evenly' };
 const nativeTree = node =>
   node.kind === 'Missing'
@@ -718,17 +698,6 @@ test('web and native reject sparse child lists without changing the rendered tre
 
 test('shared variants fixture renders every catalog variant and layout value alike on web and native', async () => {
   const steps = JSON.parse(await readFile(new URL('../../../adapters/flutter/test/fixtures/variants.json', import.meta.url), 'utf8'));
-  const textTags = { h1: 'h1', h2: 'h2', h3: 'h3', h4: 'h4', h5: 'h5', small: 'caption', p: 'body' };
-  // Reads the variant back from what the web renderer drew: the heading or paragraph tag, textarea versus input.
-  const webTree = node => {
-    if (node.tagName === 'section') return { kind: 'Card', children: node.children.map(webTree) };
-    if (node.tagName === 'div')
-      return { kind: node.style.flexDirection === 'row' ? 'Row' : 'Column', justify: node.style.justifyContent ?? null, align: node.style.alignItems ?? null, children: node.children.map(webTree) };
-    if (node.tagName === 'label') return { kind: 'TextField', variant: node.children[1].tagName === 'textarea' ? 'longText' : 'shortText', label: node.children[0].textContent, children: [] };
-    if (node.tagName === 'button') return { kind: 'Button', children: node.children.map(webTree) };
-    assert.ok(Object.hasOwn(textTags, node.tagName), 'unexpected element ' + node.tagName);
-    return { kind: 'Text', variant: textTags[node.tagName], text: node.textContent, children: [] };
-  };
   const nativeVariants = node => ({
     kind: node.kind,
     ...(node.kind === 'Text' ? { variant: node.variant ?? 'body', text: node.text } : {}),
@@ -744,7 +713,7 @@ test('shared variants fixture renders every catalog variant and layout value ali
     native.apply(step.message);
     const webRoot = host.children[0].children[0],
       nativeRoot = native.snapshot()[0].root;
-    assert.deepEqual(webRoot ? webTree(webRoot) : null, step.tree);
+    assert.deepEqual(webRoot ? variantTree(webRoot) : null, step.tree);
     assert.deepEqual(nativeRoot ? nativeVariants(nativeRoot) : null, step.tree);
   }
   // Button variants are accepted and kept by the native store; no adapter draws them differently.
@@ -760,13 +729,6 @@ test('shared Flutter text field fixture matches web and native rendering and inp
   const host = doc.createElement('main'),
     web = new A2UIRenderer(host),
     native = new NativeSurfaceStore();
-  const webState = () => {
-    const root = host.children[0]?.children[0];
-    if (!root) return { field: null, text: null };
-    const wrapper = root.children[0],
-      input = wrapper.children[1];
-    return { field: { label: wrapper.children[0].textContent, value: input.value, variant: input.tagName === 'textarea' ? 'longText' : null }, text: root.children[1].textContent };
-  };
   const nativeState = () => {
     const root = native.snapshot()[0].root;
     if (!root) return { field: null, text: null };
@@ -784,7 +746,7 @@ test('shared Flutter text field fixture matches web and native rendering and inp
       native.writeField('main', 'field', native.snapshot()[0].revision, step.input);
     }
     const expected = { field: step.field, text: step.text };
-    assert.deepEqual(webState(), expected, JSON.stringify(step));
+    assert.deepEqual(textFieldState(host.children[0]?.children[0]), expected, JSON.stringify(step));
     assert.deepEqual(nativeState(), expected, JSON.stringify(step));
   }
 });
