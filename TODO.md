@@ -100,6 +100,7 @@
   - State: branch todo/TASK-047-anchor-agent-stores-outside from main; next: build children
   - [x] **TASK-047.1** · mid · Characterize the agent stores under a restored backup and decide in ADR 0014 which take an anchor
     - Done when: the restore test records what a restored older backup undoes for each agent store of TASK-047, and ADR 0014 decides per store whether it takes an anchor or why it cannot; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
+    - State: attempts 0/3; baseline 2050 passing; branch todo/TASK-047.5-anchor-admin-agent-kinds-docs from todo/TASK-047-anchor-agent-stores-outside; next: build
   - [x] **TASK-047.2** · high · Anchor the agent run and action journal stores as ADR 0014 decides
     - Done when: the run store and the action journal accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows a finished action is no longer dispatched again; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
     - [x] **TASK-047.2.1** · low · Move the anchor helper and type into @app-mixer/shared and re-export them from core
@@ -112,5 +113,5 @@
     - Done when: the definition and memory stores accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows the older definition and the erased memory are refused; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
   - [x] **TASK-047.4** · high · Anchor the agent approval, delegation and cost budget stores as ADR 0014 decides
     - Done when: the approval, delegation and cost budget stores accept an anchor, refuse to answer after a restore until it is reconciled, and the restore test shows a revoked delegation stays revoked; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
-  - [ ] **TASK-047.5** · low · Teach anchor-admin the agent anchor key kinds and bring the docs and the P3-03 and P3-04 boxes in line
+  - [/] **TASK-047.5** · low · Teach anchor-admin the agent anchor key kinds and bring the docs and the P3-03 and P3-04 boxes in line
     - Done when: docs/kubernetes-data-plane.md#restoring-an-older-backup, the P3-03 and P3-04 rollback boxes and ADR 0014 name the anchors the agent stores accept; `node --test packages/cli/test/process-files.test.mjs packages/cli/test/anchor-admin.test.mjs`
