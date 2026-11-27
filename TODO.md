@@ -7,11 +7,6 @@
 
 ## 🌳 Task Tree
 
-- [/] **FIX-054** · P0 · low · Upgrade libpam in the Data Plane image runtime stage so the image scan passes (CVE-2025-6020)
-  - Done when: the runtime stage of Dockerfile.data-plane upgrades libpam0g, libpam-modules, libpam-modules-bin and libpam-runtime before it removes the package managers, and docs/kubernetes-data-plane.md#image-contents says why the pinned base is not enough; `node --test packages/cli/test/process-files.test.mjs`
-  - Links: Ref: docs/kubernetes-data-plane.md#image-contents
-  - State: attempts 0/3; baseline 2053 passing; branch todo/FIX-054-upgrade-libpam-data-plane-image from main; next: build
-
 - [ ] **TASK-024** · P2 · mid · Close the adapter and parity evidence gaps (legacy P2-01)
   - Done when: every Still-to-prove box of P2-01 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-024 · Lane: evidence
