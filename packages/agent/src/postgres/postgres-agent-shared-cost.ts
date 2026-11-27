@@ -1,4 +1,5 @@
 import { isIdentifier, isNonNegativeInteger } from '../validation.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor, type AnchorErrorHandler, type AuditSequenceAnchor } from '@app-mixer/shared';
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 type Actor = { tenantId: string; principalId: string };
 type Scope = { tenantId: string; budgetId: string; currency: string; maxMicros: number };
@@ -13,6 +14,9 @@ type Options = {
   authorize: (actor: Actor, scope: Scope, action: Action, call: Call | undefined, signal: AbortSignal) => boolean | Promise<boolean>;
   timeoutMs?: number;
   maxPending?: number;
+  /** A high-water mark of the newest call version of this budget, held outside the database (ADR 0014). A restored older database is then refused. */
+  versionAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
 };
 export type SharedCostReservation = Call & { reservedMicros: number; usedMicros: number | null; status: 'reserved' | 'settled'; createdAt: number };
 export type SharedCostSummary = { currency: string; limitMicros: number; reservedMicros: number; committedMicros: number; calls: number };
@@ -43,6 +47,7 @@ const dbNumber = (value: unknown): number => {
   return n;
 };
 const NOW = '(extract(epoch from clock_timestamp())*1000)::bigint';
+const versionSequence = 'app_mixer_shared_cost_version';
 /** One host-selected shared cost budget backed by an authoritative PostgreSQL primary. */
 export class PostgresAgentSharedCost {
   private readonly scope: Scope;
@@ -52,6 +57,11 @@ export class PostgresAgentSharedCost {
   private readonly authorize: Options['authorize'];
   private readonly timeoutMs?: number | undefined;
   private readonly maxPending?: number | undefined;
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
+  /** With an anchor every change draws a new version from the sequence in the same statement; without one the statements are unchanged. */
+  private readonly bump: string;
+  private readonly returned: string;
   private pendingAuthorizations = 0;
   constructor(options: Options) {
     const scope = options?.scope;
@@ -72,7 +82,9 @@ export class PostgresAgentSharedCost {
       typeof options.authorize !== 'function' ||
       (options.timeoutMs === undefined) !== (options.maxPending === undefined) ||
       (options.timeoutMs !== undefined && (!integer(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)) ||
-      (options.maxPending !== undefined && (!integer(options.maxPending) || options.maxPending < 1 || options.maxPending > 100))
+      (options.maxPending !== undefined && (!integer(options.maxPending) || options.maxPending < 1 || options.maxPending > 100)) ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
     )
       throw Error('Invalid shared cost configuration');
     this.scope = { tenantId: scope.tenantId, budgetId: scope.budgetId, currency: scope.currency, maxMicros: scope.maxMicros };
@@ -82,6 +94,33 @@ export class PostgresAgentSharedCost {
     this.authorize = options.authorize;
     this.timeoutMs = options.timeoutMs;
     this.maxPending = options.maxPending;
+    this.anchor = options.versionAnchor;
+    this.onAnchorError = options.onAnchorError;
+    this.bump = this.anchor ? ",version=nextval('" + versionSequence + "')" : '';
+    this.returned = this.anchor ? ',version' : '';
+  }
+  /** Refuses to answer when the newest call version of this budget is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(): Promise<void> {
+    if (!this.anchor) return;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: agentAnchorKey('agent-shared-cost', this.scope.tenantId, this.scope.budgetId),
+      unavailable: 'Shared cost anchor unavailable',
+      rolledBack: 'Shared cost was rolled back',
+      onError: this.onAnchorError,
+      stored: async () => {
+        const result = await this.query('SELECT COALESCE(max(version),0) AS stored FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND budget_id=$2', [this.scope.tenantId, this.scope.budgetId]);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1) throw Error('Invalid shared cost data');
+        return dbNumber(result.rows[0]!.stored);
+      }
+    });
+  }
+  /** The change is committed; a failure of the anchor leaves it behind until the next call catches it up. */
+  private async advance(row: Record<string, unknown> | undefined): Promise<void> {
+    if (!this.anchor) return;
+    const version = dbNumber(row?.version);
+    if (version < 1) throw Error('Invalid shared cost data');
+    await advanceAnchor(this.anchor, agentAnchorKey('agent-shared-cost', this.scope.tenantId, this.scope.budgetId), version, this.onAnchorError);
   }
   async initialize(): Promise<void> {
     await this.query(
@@ -226,6 +265,12 @@ export class PostgresAgentSharedCost {
         '$$',
       []
     );
+    if (this.anchor) {
+      // A database that already holds calls gains the version column; its rows draw their versions from the sequence.
+      await this.query('CREATE SEQUENCE IF NOT EXISTS ' + versionSequence, []);
+      await this.query('ALTER TABLE app_mixer_shared_cost_calls ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT nextval(' + "'" + versionSequence + "')", []);
+      await this.query('CREATE INDEX IF NOT EXISTS app_mixer_shared_cost_calls_newest ON app_mixer_shared_cost_calls(tenant_id,budget_id,version)', []);
+    }
   }
   binding(): Scope {
     return { ...this.scope };
@@ -317,8 +362,9 @@ export class PostgresAgentSharedCost {
       selected = this.call(call);
     if (!integer(reservedMicros) || reservedMicros < 1 || reservedMicros > this.scope.maxMicros) throw Error('Invalid shared cost reservation');
     await this.permit(who, 'reserve', selected);
+    await this.checkAnchor();
     try {
-      return await this.transaction(async query => {
+      const reserved = await this.transaction(async query => {
         await this.lock(query);
         await this.permit(who, 'reserve', selected);
         const existing = await query('SELECT 1 FROM app_mixer_shared_cost_calls WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id=$4', [
@@ -385,13 +431,15 @@ export class PostgresAgentSharedCost {
         const rows = (
           await query(
             `INSERT INTO app_mixer_shared_cost_calls (tenant_id,budget_id,agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved',${NOW}) 
-              RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at`,
+              RETURNING agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at${this.returned}`,
             [...this.values(selected), reservedMicros]
           )
         ).rows;
         if (rows.length !== 1) throw Error('Invalid shared cost data');
-        return this.record(rows[0]!);
+        return { record: this.record(rows[0]!), row: rows[0]! };
       });
+      await this.advance(reserved.row);
+      return reserved.record;
     } catch (error) {
       if (error && typeof error === 'object' && 'code' in error && (error as { code: unknown }).code === '23505') throw Error('Shared cost call already exists');
       throw error;
@@ -412,12 +460,15 @@ export class PostgresAgentSharedCost {
       action = reference === undefined ? 'settle' : 'reconcile';
     if (!integer(usedMicros) || usedMicros > 100000000000) throw Error('Invalid shared cost usage');
     await this.permit(who, action, selected);
-    return this.transaction(async query => {
+    await this.checkAnchor();
+    const settled = await this.transaction(async query => {
       await this.lock(query);
       await this.permit(who, action, selected);
       const rows = (
         await query(
-          "UPDATE app_mixer_shared_cost_calls SET status='settled',used_micros=$6 WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5 AND status='reserved' RETURNING " +
+          "UPDATE app_mixer_shared_cost_calls SET status='settled',used_micros=$6" +
+            this.bump +
+            " WHERE tenant_id=$1 AND budget_id=$2 AND agent_id=$3 AND run_id=$4 AND call_id=$5 AND status='reserved' RETURNING " +
             '' +
             '' +
             '' +
@@ -457,7 +508,8 @@ export class PostgresAgentSharedCost {
             '' +
             '' +
             '' +
-            'agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at',
+            'agent_id,run_id,call_id,reserved_micros,used_micros,status,created_at' +
+            this.returned,
           [...this.values(selected), usedMicros]
         )
       ).rows;
@@ -467,13 +519,16 @@ export class PostgresAgentSharedCost {
           `INSERT INTO app_mixer_shared_cost_reconciliations (tenant_id,budget_id,agent_id,run_id,call_id,principal_id,reference,used_micros,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,${NOW})`,
           [...this.values(selected), who.principalId, reference, usedMicros]
         );
-      return this.record(rows[0]!);
+      return { record: this.record(rows[0]!), row: rows[0]! };
     });
+    await this.advance(settled.row);
+    return settled.record;
   }
   async get(actor: Actor, call: Call): Promise<SharedCostReservation | undefined> {
     const who = this.actor(actor),
       selected = this.call(call);
     await this.permit(who, 'read', selected);
+    await this.checkAnchor();
     await this.checkReadConfig();
     const rows = (
       await this.query(
@@ -529,6 +584,7 @@ export class PostgresAgentSharedCost {
   async summary(actor: Actor): Promise<SharedCostSummary> {
     const who = this.actor(actor);
     await this.permit(who, 'read');
+    await this.checkAnchor();
     const rows = (
       await this.query(
         "SELECT b.currency,b.max_micros,COUNT(c.call_id) AS calls,COALESCE(SUM(CASE WHEN c.status='reserved' THEN c.reserved_micros ELSE 0 END),0) AS reserved," +
@@ -596,6 +652,7 @@ export class PostgresAgentSharedCost {
     if (!(signal instanceof AbortSignal)) throw Error('Invalid shared cost signal');
     const who = this.actor(actor);
     await this.permit(who, 'metrics', undefined, signal);
+    await this.checkAnchor();
     const query = this.queryWithSignal ? (sql: string, args: unknown[]) => this.queryWithSignal!(sql, args, signal) : this.query;
     const rows = (
       await query(
@@ -658,6 +715,7 @@ export class PostgresAgentSharedCost {
     const after = options.after === undefined ? undefined : this.call(options.after),
       limit = options.limit ?? 50;
     await this.permit(who, 'pending');
+    await this.checkAnchor();
     await this.checkReadConfig();
     const rows = (
       await this.query(
@@ -732,6 +790,7 @@ export class PostgresAgentSharedCost {
     )
       throw Error('Invalid shared cost history');
     await this.permit(who, 'audit');
+    await this.checkAnchor();
     await this.checkReadConfig();
     const rows = (
       await this.query(

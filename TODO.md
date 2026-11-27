@@ -98,8 +98,7 @@
   - Done when: the shared cost store accepts an anchor, refuses to answer after a restore until it is reconciled, and the restore test shows a forgotten reservation is refused; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
   - Links: Ref: docs/adr/0014-agent-store-rollback-anchors.md · From: TASK-047 · Lane: main
   - State: branch todo/FEAT-053-anchor-shared-cost from main; next: build children
-  - [/] **FEAT-053.1** · high · Anchor the shared cost budgets and calls by a version drawn from a sequence on every change
+  - [x] **FEAT-053.1** · high · Anchor the shared cost budgets and calls by a version drawn from a sequence on every change
     - Done when: a shared cost store with an anchor (one per tenant and budget) refuses to answer after a restore and an existing table gains its version column; `node --test packages/agent/test/postgres-agent-shared-cost-anchor.test.mjs`
-    - State: attempts 0/3; baseline 2050 passing; branch todo/FEAT-053.1-anchor-shared-cost-store from todo/FEAT-053-anchor-shared-cost; next: build
   - [ ] **FEAT-053.2** · low · Teach anchor-admin the shared cost key kind and bring the docs and ADR 0014 in line
     - Done when: anchor-admin key finds the shared cost anchor file by tenant and budget and the docs and ADR 0014 no longer say the store is unanchored; `node --test packages/cli/test/process-files.test.mjs packages/cli/test/anchor-admin.test.mjs`
