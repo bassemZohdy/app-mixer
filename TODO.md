@@ -24,9 +24,9 @@
 - [ ] **TASK-026** · P2 · mid · Close the internal data provider and staged transaction evidence gaps (legacy P2-03)
   - Done when: every Still-to-prove box of P2-03 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/acceptance-checklists.md · Lane: evidence
-  - In repo: TASK-043 (every rejected JSON Schema keyword with a decision, then the accepted form features)
+  - In repo: done: TASK-043 (every rejected JSON Schema keyword with a decision in docs/business-data.md#keywords-the-form-editor-rejects, and `default` and `readOnly` built and tested; the P2-03 box is checked)
   - Blocked on: a provider sandbox; staged outcomes against a real external provider, including an ambiguous timeout reconciled without a duplicate effect
-  - State: next: TASK-043
+  - State: next: the provider sandbox
 
 - [ ] **TASK-027** · P2 · mid · Close the offline-first queue evidence gaps (legacy P2-04)
   - Done when: every Still-to-prove box of P2-04 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
@@ -129,11 +129,6 @@
   - Checked with evidence: real provider contracts under crash (staged-s3-provider.test.mjs and action-s3-provider-crash.test.mjs against SeaweedFS, ported from the hardening branch on 2026-11-26; 1 of 4 boxes); weekly: PostgreSQL 14 to 17 with pgvector, Linux arm64
   - Blocked on: production; managed stores, a node taken down in production, a real network partition between a node and the database, and an arm64 node pool
   - State: next: the production stores
-
-- [ ] **TASK-043** · P2 · mid · JSON Schema form features the editor rejects: list each keyword with a decision, then implement the accepted ones
-  - Done when: a section of docs/business-data.md lists every JSON Schema keyword the form editor rejects today with keep, implement or refuse and the reason; each implemented keyword has a test under packages/core/test and the editor template (packages/cli/templates/data-editor.mjs) renders it; the P2-03 box in docs/acceptance-checklists.md cites the section
-  - Links: Ref: docs/acceptance-checklists.md#p2-03-internal-data-provider-and-staged-external-transactions · From: TASK-026 · Lane: main
-  - State: next: the list is written (docs/business-data.md#keywords-the-form-editor-rejects, 2026-11-26); implement `default` and `readOnly` as it decides: accept a scalar `default` that matches the declared type and constraints and a boolean `readOnly` in fieldsFromJsonSchema, carry `jsonDefault` and `jsonReadOnly` through normalizeFields and the template, prefill new records and new array items, keep loaded values in read-only controls and let a required read-only field not block saving a new record; test under packages/core/test and packages/cli/test, then `npm run previews`
 
 - [ ] **TASK-044** · P2 · mid · Rollback anchors for the offline stores without one, and detection of selective tampering
   - Done when: every store under packages/web/src accepts a `rollbackAnchor` as EncryptedBrowserQueue, EncryptedPublicationCache, the persistent request keys and the shared identity store do, or its documentation names why it cannot; a record deleted or swapped for an older version inside one partition is detected on the next open or write; tests under packages/web/test cover both; the P2-04 box in docs/acceptance-checklists.md cites them

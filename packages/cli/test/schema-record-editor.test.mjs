@@ -7569,3 +7569,240 @@ test('record browser combines not-equal filters with any-condition mode', async 
     await rm(s.dir, { recursive: true, force: true });
   }
 });
+
+// TASK-043: `default` and `readOnly` are the two keywords docs/business-data.md decides to implement.
+function recordForm(runtime, jsonSchema) {
+  const dom = new JSDOM('<!doctype html>');
+  const root = runtime.createRecordEditor({ getOperation: 'items.get', putOperation: 'items.put', jsonSchema }).render({}, null, null, dom.window.document);
+  dom.window.document.body.appendChild(root);
+  const buttons = [...root.querySelectorAll('button')],
+    load = buttons.find(b => b.textContent === 'Load'),
+    save = buttons.find(b => b.textContent === 'Save'),
+    id = root.querySelector('input'),
+    status = root.querySelector('[role=status]'),
+    label = text => [...root.querySelectorAll('label')].find(x => x.textContent.startsWith(text)),
+    control = text => label(text).querySelector('input,select'),
+    change = (node, value = node.value) => {
+      if (node.type === 'checkbox') node.checked = value;
+      else node.value = value;
+      node.dispatchEvent(new dom.window.Event(node.type === 'checkbox' ? 'change' : 'input', { bubbles: true }));
+    },
+    click = text => [...root.querySelectorAll('button')].find(b => b.textContent === text).click(),
+    open = async (recordId, loaded) => {
+      id.value = recordId;
+      id.dispatchEvent(new dom.window.Event('input'));
+      load.click();
+      await wait(() => loaded.test(status.textContent));
+    };
+  return { dom, root, id, status, label, control, change, click, open, save, load };
+}
+
+test('JSON Schema defaults prefill a new record and a new array item but never a loaded record', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom, f;
+  try {
+    const jsonSchema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string', default: 'Ada' },
+          age: { type: 'integer', default: 30, minimum: 0 },
+          active: { type: 'boolean', default: true },
+          tier: { enum: ['standard', 'premium'], default: 'premium' },
+          nick: { type: ['string', 'null'], default: null },
+          note: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string', default: 'new' }, maxItems: 3 }
+        },
+        required: ['name']
+      },
+      validate = createRecordJsonSchemaValidator(jsonSchema);
+    let saved,
+      record = null;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      // The server validator knows both keywords and applies no default itself: what the form saved is what it validates.
+      assert.equal(validate(input.value), true);
+      saved = input.value;
+      record = { id: input.id, revision: 1, value: saved };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    f = recordForm(s.runtime, jsonSchema);
+    dom = f.dom;
+    await f.open('one', /^New record/);
+    assert.equal(f.control('name').value, 'Ada');
+    assert.equal(f.control('age').value, '30');
+    assert.equal(f.control('active').value, 'true');
+    assert.equal(f.control('tier').selectedOptions[0].textContent, 'premium');
+    assert.equal(f.control(' Set nick to null').checked, true);
+    assert.equal(f.control('note').value, '');
+    f.save.click();
+    await wait(() => saved && !f.save.disabled);
+    assert.deepEqual(saved, { name: 'Ada', age: 30, active: true, tier: 'premium', nick: null });
+    f.change(f.control(' Include tags'), true);
+    f.click('Add tags item');
+    assert.equal(f.root.querySelectorAll('fieldset input[type=text]').length, 1);
+    assert.equal(f.root.querySelector('fieldset input[type=text]').value, 'new');
+    f.save.click();
+    await wait(() => saved.tags && !f.save.disabled);
+    assert.deepEqual(saved.tags, ['new']);
+    // A loaded record never gains a default: what it carries, or lacks, is what is saved.
+    record = { id: 'two', revision: 1, value: { name: 'Grace' } };
+    await f.open('two', /^Record loaded/);
+    assert.equal(f.control('name').value, 'Grace');
+    assert.equal(f.control('age').value, '');
+    assert.equal(f.control('active').value, '');
+    assert.equal(f.control('tier').value, '');
+    assert.equal(f.control(' Set nick to null').checked, false);
+    assert.equal(f.label(' Include tags').querySelector('input').checked, false);
+    f.save.click();
+    await wait(() => saved.name === 'Grace' && !f.save.disabled);
+    assert.deepEqual(saved, { name: 'Grace' });
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema read-only fields stay disabled, never block a new record and keep the loaded value as it is', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom, f;
+  try {
+    const jsonSchema = {
+      type: 'object',
+      properties: {
+        id: { type: 'string', readOnly: true },
+        name: { type: 'string' },
+        computed: { type: 'integer', readOnly: true, default: 1, minimum: 0 },
+        fixed: { enum: ['a', 'b'], readOnly: true, default: 'b' }
+      },
+      required: ['id', 'name']
+    };
+    let saved,
+      record = null,
+      puts = 0;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      // The host supplies the required read-only field before the server validator sees the record, as a server-managed ID would be.
+      puts++;
+      if (puts === 1) assert.equal(createRecordJsonSchemaValidator(jsonSchema)({ ...input.value, id: 'srv-1' }), true);
+      saved = input.value;
+      record = { id: input.id, revision: 1, value: puts === 1 ? { ...saved, id: 'srv-1' } : saved };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    f = recordForm(s.runtime, jsonSchema);
+    dom = f.dom;
+    await f.open('one', /^New record/);
+    const id = f.control('id (read-only)'),
+      name = f.control('name (required)'),
+      computed = f.control('computed (read-only)'),
+      fixed = f.control('fixed (read-only)');
+    for (const node of [id, computed, fixed]) assert.equal(node.disabled, true);
+    assert.equal(name.disabled, false);
+    assert.equal(computed.value, '1');
+    assert.equal(fixed.selectedOptions[0].textContent, 'b');
+    assert.doesNotMatch(f.root.textContent, /id \(required\)|id \(optional\)/);
+    f.change(name, 'Ada');
+    f.save.click();
+    await wait(() => saved && !f.save.disabled);
+    // The required read-only field without a default is absent rather than blocking; the defaults were saved.
+    assert.deepEqual(saved, { name: 'Ada', computed: 1, fixed: 'b' });
+    // A loaded value is the server's: shown, disabled, and saved back unchanged even where it bends the property's rules.
+    record = { id: 'two', revision: 1, value: { id: 'srv-9', name: 'Grace', computed: -5, fixed: 'a' } };
+    await f.open('two', /^Record loaded/);
+    assert.equal(id.value, 'srv-9');
+    assert.equal(computed.value, '-5');
+    assert.equal(fixed.selectedOptions[0].textContent, 'a');
+    assert.equal(name.disabled, false);
+    for (const node of [id, computed, fixed]) assert.equal(node.disabled, true);
+    f.change(name, 'Grace Hopper');
+    f.save.click();
+    await wait(() => saved.name === 'Grace Hopper' && !f.save.disabled);
+    assert.deepEqual(saved, { id: 'srv-9', name: 'Grace Hopper', computed: -5, fixed: 'a' });
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema read-only array items take their default when added and keep loaded values', async () => {
+  const s = await setup(),
+    originalFetch = globalThis.fetch;
+  let dom, f;
+  try {
+    const jsonSchema = { type: 'object', properties: { tags: { type: 'array', items: { type: 'string', readOnly: true, default: 'fixed' }, maxItems: 3 } } };
+    let saved,
+      record = null;
+    globalThis.fetch = async (path, options) => {
+      const input = JSON.parse(options.body);
+      if (path.endsWith('items.get')) return { ok: true, json: async () => ({ result: record }) };
+      assert.equal(createRecordJsonSchemaValidator(jsonSchema)(input.value), true);
+      saved = input.value;
+      record = { id: input.id, revision: 1, value: saved };
+      return { ok: true, json: async () => ({ result: record }) };
+    };
+    f = recordForm(s.runtime, jsonSchema);
+    dom = f.dom;
+    await f.open('one', /^New record/);
+    f.change(f.control(' Include tags'), true);
+    f.click('Add tags item');
+    const added = f.root.querySelector('fieldset input[type=text]');
+    assert.equal(added.value, 'fixed');
+    assert.equal(added.disabled, true);
+    f.save.click();
+    await wait(() => saved && !f.save.disabled);
+    assert.deepEqual(saved, { tags: ['fixed'] });
+    record = { id: 'two', revision: 1, value: { tags: ['a', 'b'] } };
+    await f.open('two', /^Record loaded/);
+    const items = [...f.root.querySelectorAll('fieldset input[type=text]')];
+    assert.deepEqual(
+      items.map(item => item.value),
+      ['a', 'b']
+    );
+    assert.ok(items.every(item => item.disabled));
+    f.click('Remove tags item 2');
+    f.save.click();
+    await wait(() => saved.tags && saved.tags.length === 1 && !f.save.disabled);
+    assert.deepEqual(saved, { tags: ['a'] });
+  } finally {
+    globalThis.fetch = originalFetch;
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
+
+test('JSON Schema defaults and read-only flags are validated alike by the preview and the runtime', async () => {
+  const s = await setup();
+  let dom;
+  try {
+    const good = { type: 'object', properties: { name: { type: 'string', default: 'Ada', readOnly: true } }, required: ['name'] },
+      options = { getOperation: 'items.get', putOperation: 'items.put' };
+    for (const factory of [s.runtime.createRecordEditor, s.preview.createRecordEditor]) {
+      assert.doesNotThrow(() => factory({ ...options, jsonSchema: good }));
+      for (const property of [
+        { type: 'string', default: 5 },
+        { type: 'integer', default: 1.5 },
+        { type: 'number', default: 3, multipleOf: 2 },
+        { type: 'string', default: '', minLength: 1 },
+        { type: 'string', default: 'y', pattern: '^x' },
+        { enum: ['a', 'b'], default: 'c' },
+        { const: 'k', default: 'j' },
+        { type: 'string', default: null },
+        { type: 'string', default: {} },
+        { type: 'string', readOnly: 'yes' }
+      ])
+        assert.throws(() => factory({ ...options, jsonSchema: { type: 'object', properties: { n: property } } }), /Unsupported/, JSON.stringify(property));
+    }
+    dom = new JSDOM('<!doctype html>');
+    const root = s.preview.createRecordEditor({ ...options, jsonSchema: good }).render({}, null, null, dom.window.document);
+    assert.match(root.textContent, /name \(read-only\)/);
+    assert.ok([...root.querySelectorAll('button,input,select,textarea')].every(node => node.disabled));
+  } finally {
+    dom?.window.close();
+    await rm(s.dir, { recursive: true, force: true });
+  }
+});
