@@ -25,7 +25,7 @@
 - [ ] **TASK-027** · P2 · mid · Close the offline-first queue evidence gaps (legacy P2-04)
   - Done when: every Still-to-prove box of P2-04 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-027 · Lane: evidence
-  - State: next: TASK-052; the device and identity boxes wait for the devices and the production identity
+  - State: next: the device and identity boxes wait for the devices and the production identity
 
 - [ ] **TASK-028** · P2 · mid · Close the schema migration, rollback and promotion evidence gaps (legacy P2-05)
   - Done when: every Still-to-prove box of P2-05 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
@@ -101,14 +101,3 @@
   - Done when: every PostgreSQL store under packages/agent/src/postgres that records security or money state (definitions, runs, the action journal, memory, approvals, delegations and the cost budget) accepts an anchor as PostgresJwtRevocations and PostgresPublicationReleaseRegistry do (docs/kubernetes-data-plane.md, Anchors), or its documentation names why it cannot; packages/core/test/postgres-restore-rollback.test.mjs covers each one and shows a restore refused until the anchor is reconciled; the sentence in docs/kubernetes-data-plane.md#restoring-an-older-backup that only the connector's promotion floor can be anchored is brought in line with the anchors the stores accept; the P3-03 and P3-04 rollback boxes cite the test; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs`
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
-
-- [/] **TASK-052** · P2 · mid · Decide and build rollback anchors for the PostgreSQL offline stores, as TASK-047 does for the agent stores
-  - Done when: an ADR under docs/adr decides whether PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions and PostgresOfflineRecovery accept an anchor (an epoch or high-water mark held outside their database, as PostgresJwtRevocations and PostgresExtensionApprovals do through file-sequence-anchor.ts) or document why they cannot; if accepted, each store refuses to answer after a restore until its anchor is reconciled, and packages/core/test/postgres-restore-rollback.test.mjs shows the refusal for each; the offline rows in docs/kubernetes-data-plane.md#restoring-an-older-backup and the P3-03 and P3-04 rollback boxes are brought in line; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs` passes
-  - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-027 · Lane: main
-  - State: attempts 0/3; baseline 2030 passing; branch todo/TASK-052-decide-build-rollback-anchors from main; next: drain
-  - [x] **TASK-052.1** · mid · Anchor PostgresOfflineRecovery by its event id (ADR 0013, decision 4)
-    - Done when: a recovery store with an anchor refuses to answer after a restore until the anchor is reconciled, shown in the restore test; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/core/test/postgres-offline-recovery.test.mjs`
-  - [x] **TASK-052.2** · high · Anchor PostgresOfflineExecutions by a version sequence (ADR 0013, decision 3)
-    - Done when: an executions store with an anchor refuses to answer after a restore until the anchor is reconciled and an existing table gains its version column, shown in the restore test; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs packages/core/test/postgres-offline-executions.test.mjs`
-  - [x] **TASK-052.3** · low · Teach anchor-admin the two key kinds, accept ADR 0013 and bring the docs in line
-    - Done when: docs/kubernetes-data-plane.md, the P3-03 and P3-04 boxes and the ADR table state the new anchors and ADR 0013 is Accepted; `node --test packages/cli/test/process-files.test.mjs`
