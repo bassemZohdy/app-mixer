@@ -71,9 +71,9 @@ test('TASK-002.1.6 the Node floor is 22.22.2 in engines, README, CONTRIBUTING, t
 });
 
 test('TASK-002.1.6 jsdom 31 and OpenTelemetry API 1.10 are declared by every package that uses them', () => {
-  for (const name of ['web', 'cli', 'agent']) assert.equal({ ...manifest(name).devDependencies, ...manifest(name).dependencies }.jsdom, '^31.0.0', name + ' jsdom');
+  for (const name of ['web', 'cli', 'agent']) assert.equal({ ...manifest(name).devDependencies, ...manifest(name).dependencies }.jsdom, '^31.0.1', name + ' jsdom');
   for (const name of ['core', 'agent']) assert.equal(manifest(name).dependencies['@opentelemetry/api'], '1.10.0', name + ' @opentelemetry/api');
-  for (const dependency of ['@opentelemetry/context-async-hooks', '@opentelemetry/core', '@opentelemetry/sdk-trace']) assert.equal(manifest('core').devDependencies[dependency], '3.1.0', dependency);
+  for (const dependency of ['@opentelemetry/context-async-hooks', '@opentelemetry/core', '@opentelemetry/sdk-trace']) assert.equal(manifest('core').devDependencies[dependency], '3.1.1', dependency);
 });
 
 // TASK-014: JSON.parse keeps the last of a repeated key, so a duplicate hides in a manifest unless the text is scanned.
