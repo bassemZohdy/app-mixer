@@ -13,6 +13,8 @@ export const capabilityAuditAnchorKey = (tenantId: string): string => 'capabilit
 export const jwtRevocationAnchorKey = (issuer: string): string => 'jwt-revocations-' + digest(issuer);
 /** The anchor key for one tenant and application's extension approval epoch. */
 export const extensionApprovalAnchorKey = (tenantId: string, applicationId: string): string => 'extension-approvals-' + digest(tenantId + separator + applicationId);
+/** The anchor key for one tenant and application's offline recovery event sequence. */
+export const offlineRecoveryAnchorKey = (tenantId: string, applicationId: string): string => 'offline-recovery-' + digest(tenantId + separator + applicationId);
 /** The anchor key for one release scope's floor. Hashed so scopes cannot collide on separators or case and the name stays short. */
 export const releaseFloorAnchorKey = (tenantId: string, applicationId: string, environment: string): string =>
   'release-floor-' + digest(tenantId + separator + applicationId + separator + environment);

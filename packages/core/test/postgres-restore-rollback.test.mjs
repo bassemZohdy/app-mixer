@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { PostgresJwtRevocations, PostgresPublicationReleaseRegistry, PostgresExtensionApprovals, PostgresCapabilityAudit, createFileSequenceAnchor, capabilityAuditAnchorKey } from '../dist/index.js';
-import { PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions, PostgresOfflineRecovery } from '../dist/index.js';
+import { PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions, PostgresOfflineRecovery, offlineRecoveryAnchorKey } from '../dist/index.js';
 
 const run = promisify(execFile),
   enabled = process.env.APP_MIXER_TEST_POSTGRES_RESTORE === 'docker',
@@ -95,6 +95,8 @@ test(
         slots = new PostgresOfflineSlots({ query, requestKeys: keys }),
         executions = new PostgresOfflineExecutions({ query, requestKeys: keys }),
         recovery = new PostgresOfflineRecovery({ query, authorize: () => true, clock: () => now }),
+        // TASK-052.1: the same store with an event anchor held outside the database (ADR 0013).
+        anchoredRecovery = new PostgresOfflineRecovery({ query, authorize: () => true, clock: () => now, eventAnchor: mapAnchor }),
         operator = { tenantId: 'tenant', principalId: 'operator' },
         payload = { n: 1 };
       let dispatches = 0;
@@ -133,7 +135,7 @@ test(
       const keyB = await keys.allocate(offlineScope, device, 'save', 'request-b', payload),
         slotKeyB = await slots.reset(offlineScope, device, 'form-1', slotKeyA);
       assert.deepEqual(await executions.execute(offlineScope, device, 'save', payload, keyB, dispatch), { ok: 1 });
-      await recovery.reconcile(
+      await anchoredRecovery.reconcile(
         operator,
         { scope: offlineScope, principalId: device, idempotencyKey: keyU },
         uncertain.attemptToken,
@@ -188,6 +190,11 @@ test(
       await assert.rejects(anchoredApprovals.isAllowed(admin, approvalScope, reference, operation), /Extension approvals were rolled back/);
       // The audit sink with an outside high-water mark also refuses: recording would have reused sequence 4.
       await assert.rejects(anchoredAudit.record(event(6)), /Audit log was rolled back/);
+      // TASK-052.1: with an event anchor the recovery store refuses instead of letting the uncertain outcome be reconciled again unseen.
+      const recoveryTarget = { scope: offlineScope, principalId: device, idempotencyKey: keyU };
+      await assert.rejects(anchoredRecovery.history(operator, recoveryTarget), /Offline recovery was rolled back/);
+      await assert.rejects(anchoredRecovery.reconcile(operator, recoveryTarget, uncertain.attemptToken, { outcome: 'not_applied' }, 'again'), /Offline recovery was rolled back/);
+      assert.equal((await executions.get(offlineScope, device, keyU))?.status, 'uncertain', 'the refused reconciliation changed nothing');
       t.diagnostic(JSON.stringify(outcome));
       t.diagnostic(JSON.stringify(offline));
       // Current behaviour: none of the stores notices that it went back in time.

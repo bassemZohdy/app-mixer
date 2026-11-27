@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { PostgresOfflineRequestKeys, PostgresOfflineExecutions, PostgresOfflineRecovery } from '../dist/index.js';
+import { PostgresOfflineRequestKeys, PostgresOfflineExecutions, PostgresOfflineRecovery, offlineRecoveryAnchorKey } from '../dist/index.js';
 const scope = { tenantId: 'tenant', applicationId: 'app' },
   actor = { tenantId: 'tenant', principalId: 'admin' };
 
@@ -108,4 +108,70 @@ test('PostgreSQL recovery changes state and records evidence atomically', { skip
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
     await admin.end();
   }
+});
+
+test('TASK-052.1 recovery with an event anchor advances it per event and refuses once the database is behind it', async () => {
+  const key = randomUUID(),
+    attempt = randomUUID(),
+    target = { scope, principalId: 'owner', idempotencyKey: key },
+    marks = new Map(),
+    anchor = { read: name => marks.get(name) ?? 0, advance: (name, value) => marks.set(name, Math.max(marks.get(name) ?? 0, value)) },
+    anchorKey = offlineRecoveryAnchorKey('tenant', 'app'),
+    writes = [];
+  let stored = 0,
+    nextId = 7;
+  const query = async (sql, args) => {
+      if (/max\(id\)/i.test(sql)) {
+        assert.deepEqual(args, ['tenant', 'app']);
+        return { rows: [{ stored: String(stored) }], rowCount: 1 };
+      }
+      writes.push(sql);
+      stored = nextId;
+      return { rows: [{ id: String(nextId++), attempt_token: attempt }], rowCount: 1 };
+    },
+    recovery = new PostgresOfflineRecovery({ query, authorize: () => true, clock: () => 10, eventAnchor: anchor });
+  assert.notEqual(anchorKey, offlineRecoveryAnchorKey('tenant', 'other'));
+  assert.notEqual(anchorKey, offlineRecoveryAnchorKey('tenant2', 'app'));
+  await recovery.markUncertain(actor, target, attempt, 'evidence-1');
+  assert.equal(marks.get(anchorKey), 7, 'the anchor holds the id of the event just recorded');
+  await recovery.reconcile(actor, target, attempt, { outcome: 'not_applied' }, 'evidence-2');
+  assert.equal(marks.get(anchorKey), 8);
+  stored = 6; // a restored database whose newest event for the scope is older than the anchor
+  const before = writes.length;
+  await assert.rejects(recovery.reconcile(actor, target, attempt, { outcome: 'not_applied' }, 'evidence-3'), /Offline recovery was rolled back/);
+  await assert.rejects(recovery.markUncertain(actor, target, attempt, 'evidence-3'), /Offline recovery was rolled back/);
+  await assert.rejects(recovery.history(actor, target), /Offline recovery was rolled back/);
+  assert.equal(writes.length, before, 'a refused call writes nothing');
+  assert.equal(marks.get(anchorKey), 8, 'a refusal never lowers the anchor');
+  marks.set(anchorKey, 6); // the operator lowered it deliberately
+  stored = 6;
+  await recovery.markUncertain(actor, target, attempt, 'evidence-4');
+  assert.equal(marks.get(anchorKey), 9);
+  const unreadable = new PostgresOfflineRecovery({
+    query,
+    authorize: () => true,
+    eventAnchor: {
+      read: () => {
+        throw Error('disk gone');
+      },
+      advance: () => {}
+    }
+  });
+  await assert.rejects(unreadable.history(actor, target), /Offline recovery anchor unavailable/);
+  assert.throws(() => new PostgresOfflineRecovery({ query, authorize: () => true, eventAnchor: {} }), /Invalid offline recovery configuration/);
+  const errors = [],
+    broken = new PostgresOfflineRecovery({
+      query,
+      authorize: () => true,
+      eventAnchor: {
+        read: () => 0,
+        advance: () => {
+          throw Error('cannot write anchor');
+        }
+      },
+      onAnchorError: error => errors.push(error.message)
+    });
+  stored = 0;
+  await broken.markUncertain(actor, target, attempt, 'evidence-5');
+  assert.deepEqual(errors, ['cannot write anchor'], 'a failed advance is reported and the committed event stays');
 });
