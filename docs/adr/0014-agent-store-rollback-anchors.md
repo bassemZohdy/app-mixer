@@ -1,6 +1,6 @@
 # ADR 0014: Anchor the agent stores that record security, effect or money state
 
-Status: **Proposed** (TASK-047.1; accepted when the owner confirms the verdict for each store)
+Status: **Accepted** (TASK-047.1 decided it, the owner confirmed the verdict for each store, TASK-047.2 to TASK-047.5 built it for six of the seven)
 Date: 2026-11-27
 
 ## Context
@@ -40,7 +40,12 @@ had happened, with no sign of the gap. No store deletes rows (they insert or upd
 - Four stores gain a column and an index on upgrade, which the anchored `initialize()` adds; an unanchored store is unchanged.
 - The check assumes a restore of the whole database and that rows are never deleted; an operator who prunes the newest rows must
   lower the anchor. A write whose version was drawn just before a concurrent backup snapshot can go undetected.
-- The work is three children (TASK-047.2 to TASK-047.4), each of which may split again, and one for the operator tool and docs.
+- The work was TASK-047.2 to TASK-047.4 (runs and journal, definitions and memory, approvals, delegations and cost budget) and TASK-047.5
+  (the operator tool and the docs). `scripts/anchor-admin.mjs` finds each anchor file with `key agent-<store> <tenant> <agent>`.
+- **Not built:** `PostgresAgentSharedCost` is decided to take an anchor (one per tenant and budget, with its own version stream) but no
+  task has built it yet, so a restore still makes it forget reservations silently. The docs say so.
+- A listing cannot name an agent whose rows are all gone after a restore, so it does not notice that agent; a read of it is refused.
+- A replayed memory erasure request (`eraseScopeOnce`) recorded only in the rewound database is forgotten, because it changes no memory row.
 
 ## Alternatives refused
 - Anchoring only definitions, approvals and delegations. The action journal and budgets lose effects and money, which is worse.

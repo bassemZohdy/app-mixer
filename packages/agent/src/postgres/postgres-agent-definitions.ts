@@ -1,5 +1,6 @@
 import { validateAgentManifest, type AgentDefinitionVersion, type PersistentAgentManifest } from '../persistent-definitions.js';
 import { isIdentifier, isNonNegativeInteger } from '../validation.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor, type AnchorErrorHandler, type AuditSequenceAnchor } from '@app-mixer/shared';
 
 type Actor = { tenantId: string; principalId: string };
 type Action = 'read' | 'list' | 'write' | 'audit' | 'control-audit';
@@ -14,6 +15,9 @@ type Options = {
   authorize: (actor: Actor, action: Action, agentId?: string, manifest?: PersistentAgentManifest, signal?: AbortSignal) => boolean | Promise<boolean>;
   clock?: () => number;
   tenantLimits?: (tenantId: string, signal?: AbortSignal) => AgentDefinitionTenantLimits | Promise<AgentDefinitionTenantLimits>;
+  /** A high-water mark of the newest saved version, held outside the database (ADR 0014). A restored older database is then refused. */
+  versionAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
 };
 const limitKeys = ['maxAgents', 'maxVersionsPerAgent', 'maxConcurrentRuns', 'maxTokensPerRun', 'maxRunsPerDay', 'maxTurns'] as const;
 export type AgentDefinitionAudit = { agentId: string; version: number; principalId: string; observedAt: number };
@@ -34,6 +38,8 @@ export class PostgresAgentDefinitions {
   private readonly authorize: Options['authorize'];
   private readonly clock: () => number;
   private readonly tenantLimits: Options['tenantLimits'];
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
   constructor(options: Options) {
     if (
       !options ||
@@ -43,7 +49,9 @@ export class PostgresAgentDefinitions {
       typeof options.transaction !== 'function' ||
       typeof options.authorize !== 'function' ||
       (options.clock !== undefined && typeof options.clock !== 'function') ||
-      (options.tenantLimits !== undefined && typeof options.tenantLimits !== 'function')
+      (options.tenantLimits !== undefined && typeof options.tenantLimits !== 'function') ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
     )
       throw Error('Invalid agent definition configuration');
     this.query = options.query;
@@ -52,6 +60,25 @@ export class PostgresAgentDefinitions {
     this.authorize = options.authorize;
     this.clock = options.clock ?? Date.now;
     this.tenantLimits = options.tenantLimits;
+    this.anchor = options.versionAnchor;
+    this.onAnchorError = options.onAnchorError;
+  }
+  /** Refuse to answer when the saved versions of this agent are older than the anchor; the immutable version rows are the counter, so no column is added. */
+  private async checkAnchor(query: Query, tenantId: string, agentId: string): Promise<void> {
+    if (!this.anchor) return;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: agentAnchorKey('agent-definitions', tenantId, agentId),
+      stored: async () => {
+        const result = await query('SELECT COALESCE(max(version),0) AS stored FROM app_mixer_agent_definitions WHERE tenant_id=$1 AND agent_id=$2', [tenantId, agentId]),
+          stored = Number(result.rows?.[0]?.stored);
+        if (!Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid agent definition result');
+        return stored;
+      },
+      unavailable: 'Agent definitions anchor unavailable',
+      rolledBack: 'Agent definitions were rolled back',
+      onError: this.onAnchorError
+    });
   }
   async initialize(): Promise<void> {
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_definition_tenants (tenant_id TEXT PRIMARY KEY)', []);
@@ -220,6 +247,7 @@ export class PostgresAgentDefinitions {
     if (!id(agentId) || (version !== undefined && (!number(version) || version < 1))) throw Error('Invalid agent scope');
     const query: Query = signal && this.queryWithSignal ? (sql, args) => this.queryWithSignal!(sql, args, signal) : this.query;
     await this.permit(who, 'read', agentId, undefined, signal);
+    await this.checkAnchor(query, who.tenantId, agentId);
     const before = await this.read(query, who.tenantId, agentId, version);
     signal?.throwIfAborted();
     await this.permit(who, 'read', agentId, before?.manifest, signal);
@@ -265,7 +293,7 @@ export class PostgresAgentDefinitions {
       manifest = validateAgentManifest(input);
     if (manifest.tenantId !== who.tenantId) throw Error('Agent scope mismatch');
     await this.permit(who, 'write', manifest.agentId, manifest);
-    return this.transaction(async query => {
+    const saved = await this.transaction(async query => {
       // New agents serialize on a tenant row first, so concurrent creations cannot exceed maxAgents; updates only lock their own scope.
       if (this.tenantLimits && expectedVersion === 0) {
         await query('INSERT INTO app_mixer_agent_definition_tenants (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING', [who.tenantId]);
@@ -276,6 +304,7 @@ export class PostgresAgentDefinitions {
       const locked = await query('SELECT agent_id FROM app_mixer_agent_definition_scopes WHERE tenant_id=$1 AND agent_id=$2 FOR UPDATE', [who.tenantId, manifest.agentId]);
       if (!Array.isArray(locked.rows) || locked.rows.length !== 1) throw Error('Invalid agent definition lock');
       await this.permit(who, 'write', manifest.agentId, manifest);
+      await this.checkAnchor(query, who.tenantId, manifest.agentId);
       const current = await this.read(query, who.tenantId, manifest.agentId);
       if ((current?.version ?? 0) !== expectedVersion) throw Error('Agent version conflict');
       if (action) {
@@ -316,6 +345,8 @@ export class PostgresAgentDefinitions {
         ]);
       return { version, manifest: structuredClone(manifest) };
     });
+    if (this.anchor) await advanceAnchor(this.anchor, agentAnchorKey('agent-definitions', who.tenantId, saved.manifest.agentId), saved.version, this.onAnchorError);
+    return saved;
   }
   async history(actor: Actor, agentId: string, options: { after?: number; limit?: number } = {}): Promise<{ items: AgentDefinitionAudit[]; nextAfter?: number }> {
     return this.historyChecked(actor, agentId, options);
@@ -331,6 +362,7 @@ export class PostgresAgentDefinitions {
     if (!id(agentId) || !options || !number(after) || !number(limit) || limit < 1 || limit > 100) throw Error('Invalid agent definition history');
     const query: Query = signal && this.queryWithSignal ? (sql, args) => this.queryWithSignal!(sql, args, signal) : this.query;
     await this.permit(who, 'audit', agentId, undefined, signal);
+    await this.checkAnchor(query, who.tenantId, agentId);
     const result = await query('SELECT version,principal_id,observed_at FROM app_mixer_agent_definition_audit WHERE tenant_id=$1 AND agent_id=$2 AND version>$3 ORDER BY version LIMIT $4', [
       who.tenantId,
       agentId,
@@ -372,6 +404,7 @@ export class PostgresAgentDefinitions {
     if (!id(agentId) || !options || !number(after) || !number(limit) || limit < 1 || limit > 100) throw Error('Invalid agent control history');
     const query: Query = signal && this.queryWithSignal ? (sql, args) => this.queryWithSignal!(sql, args, signal) : this.query;
     await this.permit(who, 'control-audit', agentId, undefined, signal);
+    await this.checkAnchor(query, who.tenantId, agentId);
     const result = await query(
       'SELECT version,action,principal_id,observed_at FROM app_mixer_agent_definition_control_audit WHERE tenant_id=$1 AND agent_id=$2 AND version>$3 ORDER BY version LIMIT $4',
       [who.tenantId, agentId, after, limit + 1]

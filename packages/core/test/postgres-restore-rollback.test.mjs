@@ -339,9 +339,26 @@ test(
           }
         });
       await anchoredRuns.initialize();
+      // TASK-047.3: the definitions and the memory with their own anchors; the memory gains its version column.
+      const anchorOf = () => {
+          const held = new Map();
+          return { held, anchor: { read: key => held.get(key) ?? 0, advance: (key, value) => held.set(key, Math.max(held.get(key) ?? 0, value)) } };
+        },
+        definitionMarks = anchorOf(),
+        memoryMarks = anchorOf(),
+        anchoredDefinitions = new PostgresAgentDefinitions({ enabled: true, ...base, authorize: () => true, versionAnchor: definitionMarks.anchor }),
+        anchoredMemory = new PostgresAgentMemory({ enabled: true, maxEntries: 5, maxTtlMs: 3600000, authorize: () => true, ...base, versionAnchor: memoryMarks.anchor }),
+        erasedScope = { ...memoryScope, owner: { kind: 'user', id: 'person' } };
+      await anchoredDefinitions.initialize();
+      await anchoredMemory.initialize();
+      // TASK-047.4: the cost budget with its own anchor; its budgets and call ledger gain their version column.
+      const budgetMarks = anchorOf(),
+        anchoredBudget = new PostgresAgentCostBudget({ enabled: true, ...base, versionAnchor: budgetMarks.anchor });
+      await anchoredBudget.initialize();
       // State A: what the backup captures.
       await definitions.save(actor, manifest('Operations'), 0);
       await memory.put(actor, memoryScope, 'k1', 'v1', { expectedRevision: null, ...keep() });
+      await anchoredMemory.put(actor, erasedScope, 'e1', 'personal', { expectedRevision: null, ...keep() });
       await budget.configure(scope, { currency: 'USD', maxMicrosPerDay: 5000 });
       for (const id of ['r1', 'r2']) await runs.create(scope, id, { definitionVersion: 1, maxAttempts: 3, deadline: Date.now() + 600000 });
       const claim = await runs.claim(scope, 'r2', (await runs.get(scope, 'r2')).revision, 'worker', 600000, { maxConcurrentRuns: 100 });
@@ -355,6 +372,13 @@ test(
         delegations = new PostgresAgentDelegationsFoundation({ ...base, scope, runId, authorize: who => who.principalId === 'operator' });
       await approvals.initialize();
       await delegations.initialize();
+      // TASK-047.4: approvals and delegations compare the newest id of their event tables.
+      const approvalMarks = anchorOf(),
+        delegationMarks = anchorOf(),
+        anchoredApprovals = new PostgresAgentApprovalsFoundation({ ...base, scope, runId, authorize: () => true, versionAnchor: approvalMarks.anchor }),
+        anchoredDelegations = new PostgresAgentDelegationsFoundation({ ...base, scope, runId, authorize: who => who.principalId === 'operator', versionAnchor: delegationMarks.anchor });
+      await anchoredApprovals.initialize();
+      await anchoredDelegations.initialize();
       const grant = { tenantId: 'tenant', agentId: 'agent', runId, grantId: 'grant', principalId: 'person', permissionVersion: 'v1', expiresAt: Date.now() + 300000 },
         issued = await delegations.issue(operator, grant);
       await sharedCost.reserve(operator, { agentId: 'agent', runId: 'run', callId: 'call-a' }, 100);
@@ -365,16 +389,17 @@ test(
         dispatches++;
         return { ok: true };
       };
-      await definitions.save(actor, manifest('Operations v2'), 1);
+      await anchoredDefinitions.save(actor, manifest('Operations v2'), 1);
       await memory.put(actor, memoryScope, 'k1', 'v1b', { expectedRevision: 1, ...keep() });
       await memory.put(actor, memoryScope, 'k2', 'v2', { expectedRevision: null, ...keep() });
-      await budget.reserve(scope, 'r2', claim.leaseToken, 'call-1', 400);
+      assert.equal(await anchoredMemory.eraseScope(actor, erasedScope), 1, 'the personal memory is erased after the backup');
+      await anchoredBudget.reserve(scope, 'r2', claim.leaseToken, 'call-1', 400);
       await anchoredRuns.journal(scope, 'r2', claim.leaseToken).invoke('action-2', 'send', { n: 2 }, 3, async () => ({ ok: true }));
       await anchoredRuns.request(scope, 'r1', (await anchoredRuns.get(scope, 'r1')).revision, 'cancel');
       assert.equal((await anchoredRuns.get(scope, 'r1')).status, 'cancelled', 'a queued run cancelled after the backup');
       await runs.journal(scope, 'r2', claim.leaseToken).invoke('action-1', 'send', { n: 1 }, 3, dispatch);
-      await approvals.request(service, sharedClaim.leaseToken, 'approval-1', 'pay', { amount: 10 }, Date.now() + 30000);
-      await delegations.revoke(operator, 'grant', (await delegations.get(operator, 'grant')).revision);
+      await anchoredApprovals.request(service, sharedClaim.leaseToken, 'approval-1', 'pay', { amount: 10 }, Date.now() + 30000);
+      await anchoredDelegations.revoke(operator, 'grant', (await delegations.get(operator, 'grant')).revision);
       await sharedCost.reserve(operator, { agentId: 'agent', runId: 'run', callId: 'call-b' }, 200);
       assert.equal(dispatches, 1);
       assert.equal((await definitions.get(actor, 'agent')).version, 2);
@@ -397,6 +422,18 @@ test(
       await assert.rejects(anchoredRuns.journal(scope, 'r2', claim.leaseToken).get('action-2'), /Agent runs were rolled back/);
       await assert.rejects(anchoredRuns.journal(scope, 'r2', claim.leaseToken).invoke('action-2', 'send', { n: 2 }, 3, dispatch), /Agent runs were rolled back/);
       assert.equal(dispatches, 1, 'the refused journal dispatched nothing');
+      // TASK-047.3: the anchored definitions refuse instead of serving the first version, and the anchored memory instead of returning the erased one.
+      await assert.rejects(anchoredDefinitions.get(actor, 'agent'), /Agent definitions were rolled back/);
+      await assert.rejects(anchoredDefinitions.save(actor, manifest('Operations v3'), 1), /Agent definitions were rolled back/);
+      await assert.rejects(anchoredMemory.get(actor, erasedScope, 'e1'), /Agent memory was rolled back/);
+      await assert.rejects(anchoredMemory.list(actor, erasedScope), /Agent memory was rolled back/);
+      assert.equal((await memory.get(actor, erasedScope, 'e1')).value, 'personal', 'without the anchor the erased personal memory is served again');
+      // TASK-047.4: the anchored approvals refuse instead of forgetting the request, the delegations instead of making the revoked grant valid, the budget instead of forgetting the spend.
+      await assert.rejects(anchoredApprovals.get(service, 'approval-1'), /Agent approvals were rolled back/);
+      await assert.rejects(anchoredDelegations.verify(operator, issued.grant), /Agent delegations were rolled back/);
+      await assert.rejects(anchoredDelegations.get(operator, 'grant'), /Agent delegations were rolled back/);
+      await assert.rejects(anchoredBudget.summary(scope), /Agent cost budget was rolled back/);
+      await assert.rejects(anchoredBudget.reserve(scope, 'r2', claim.leaseToken, 'call-2', 400), /Agent cost budget was rolled back/);
       // Every store answers as if nothing happened, and nothing flags the gap.
       assert.equal((await definitions.get(actor, 'agent')).version, 1, 'the definition is back at its first version');
       assert.equal((await memory.list(actor, memoryScope)).items.length, 1, 'a memory written after the backup is gone');
