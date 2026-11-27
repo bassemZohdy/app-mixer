@@ -522,8 +522,9 @@ export { createTlsCredentialReloader, validateTlsCredentials } from './tls-reloa
 export { limitServer, TLS_POLICY, TLS_CIPHERS, DEFAULT_SERVER_LIMITS } from './server-limits.js';
 export type { ServerLimits } from './server-limits.js';
 export type { TlsCredentials, TlsCredentialInfo, TlsCredentialReloaderOptions } from './tls-reloader.js';
-export { SqlitePromotionSigningAudit, createAuditedPromotionSigner } from './promotion-signing-audit.js';
-export type { PromotionSigningAuditEntry, PromotionSigningAuditHead, PromotionImportRecord, UnauditedPromotionImport } from './promotion-signing-audit.js';
+export { SqlitePromotionSigningAudit, createAuditedPromotionSigner, verifyPromotionSigningAuditChain, unauditedPromotionImports } from './promotion-signing-audit.js';
+export type { PromotionSigningAuditEntry, PromotionSigningAuditHead, PromotionImportRecord, UnauditedPromotionImport, PromotionSigningAuditBody } from './promotion-signing-audit.js';
+export { PostgresPromotionSigningAudit, createPostgresAuditedPromotionSigner } from './postgres-promotion-signing-audit.js';
 export { PostgresCapabilityAudit } from './postgres-capability-audit.js';
 export type { PostgresCapabilityAuditOptions } from './postgres-capability-audit.js';
 export { PostgresAuthenticationFailureAudit } from './postgres-auth-failure-audit.js';
@@ -565,6 +566,8 @@ export {
   authenticationFailureAnchorKey,
   jwtRevocationAnchorKey,
   extensionApprovalAnchorKey,
+  offlineRecoveryAnchorKey,
+  offlineExecutionAnchorKey,
   releaseFloorAnchorKey
 } from './file-sequence-anchor.js';
 export type { AuditSequenceAnchor, AnchorErrorHandler } from './file-sequence-anchor.js';

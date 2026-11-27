@@ -11,6 +11,7 @@ import {
   type AgentMemoryAuditEvent as AuditEvent,
   type AgentMemoryProvenance as Provenance
 } from '../memory/agent-memory.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor, type AnchorErrorHandler, type AuditSequenceAnchor } from '@app-mixer/shared';
 
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 type Options = {
@@ -24,7 +25,12 @@ type Options = {
   vectorIndex?: { modelId: string; dimensions: number; scope?: Scope };
   query: Query;
   transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
+  /** A high-water mark of the newest memory version of an agent, held outside the database (ADR 0014). A restored older database is then refused, so an erasure cannot be undone. */
+  versionAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
 };
+const versionSequence = 'app_mixer_agent_memory_version';
+const tombstone = 'revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE';
 const scopeWhere = 'tenant_id=$1 AND agent_id=$2 AND owner_kind=$3 AND owner_id=$4 AND memory_kind=$5';
 /**
  * Index predicates and expressions must hold constants (the planner matches them against the query), so a validated identifier
@@ -45,6 +51,9 @@ const vectorExpression = (dimensions: number, scope?: Scope): string => {
 /** Shared PostgreSQL memory. The host must provide a real transaction pinned to one connection. */
 export class PostgresAgentMemory {
   private readonly options: Options;
+  /** With an anchor every change draws a new version from the sequence in the same statement; without one the statements are unchanged. */
+  private readonly bump: string;
+  private readonly returned: string;
   constructor(options: Options) {
     if (
       !options ||
@@ -66,12 +75,16 @@ export class PostgresAgentMemory {
           !validMemoryId(options.vectorIndex.modelId) ||
           !Number.isSafeInteger(options.vectorIndex.dimensions) ||
           options.vectorIndex.dimensions < 1 ||
-          options.vectorIndex.dimensions > 2000))
+          options.vectorIndex.dimensions > 2000)) ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
     )
       throw Error('Invalid memory configuration');
     const vectorScope =
       options.vectorIndex?.scope === undefined ? undefined : checkedMemoryScope({ tenantId: options.vectorIndex.scope.tenantId, principalId: 'index' }, options.vectorIndex.scope).scope;
     if (vectorScope && vectorScope.kind !== 'semantic') throw Error('Invalid memory configuration');
+    this.bump = options.versionAnchor ? ",version=nextval('" + versionSequence + "')" : '';
+    this.returned = options.versionAnchor ? ',version' : '';
     this.options = {
       ...options,
       ...(options.vectorIndex ? { vectorIndex: { modelId: options.vectorIndex.modelId, dimensions: options.vectorIndex.dimensions, ...(vectorScope ? { scope: vectorScope } : {}) } } : {})
@@ -375,6 +388,39 @@ export class PostgresAgentMemory {
         []
       );
     }
+    if (this.options.versionAnchor) await this.migrateVersions();
+  }
+  private async migrateVersions(): Promise<void> {
+    // A database that already holds memories gains the version column; its rows draw their versions from the sequence.
+    await this.options.query('CREATE SEQUENCE IF NOT EXISTS ' + versionSequence, []);
+    await this.options.query("ALTER TABLE app_mixer_agent_memories ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT nextval('" + versionSequence + "')", []);
+    await this.options.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_memories_newest ON app_mixer_agent_memories(tenant_id,agent_id,version)', []);
+  }
+  /** Refuses to answer when the newest memory version of this agent is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(scope: Scope): Promise<void> {
+    const anchor = this.options.versionAnchor;
+    if (!anchor) return;
+    await checkAgainstAnchor({
+      anchor,
+      key: agentAnchorKey('agent-memory', scope.tenantId, scope.agentId),
+      unavailable: 'Agent memory anchor unavailable',
+      rolledBack: 'Agent memory was rolled back',
+      onError: this.options.onAnchorError,
+      stored: async () => {
+        const result = await this.options.query('SELECT COALESCE(max(version),0) AS stored FROM app_mixer_agent_memories WHERE tenant_id=$1 AND agent_id=$2', [scope.tenantId, scope.agentId]),
+          stored = Number(result.rows?.[0]?.stored);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || !Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid memory result');
+        return stored;
+      }
+    });
+  }
+  /** The change is committed; the anchor moves to the newest version the statement drew, and a failure leaves it behind until the next call catches it up. */
+  private async advance(scope: Scope, rows: Record<string, unknown>[] | undefined): Promise<void> {
+    const anchor = this.options.versionAnchor;
+    if (!anchor || !rows?.length) return;
+    const newest = Math.max(...rows.map(row => Number(row.version)));
+    if (!Number.isSafeInteger(newest) || newest < 1) throw Error('Invalid memory result');
+    await advanceAnchor(anchor, agentAnchorKey('agent-memory', scope.tenantId, scope.agentId), newest, this.options.onAnchorError);
   }
   private args(scope: Scope): string[] {
     return [scope.tenantId, scope.agentId, scope.owner.kind, scope.owner.id, scope.kind];
@@ -478,6 +524,17 @@ export class PostgresAgentMemory {
       return operation(query);
     });
   }
+  /** A write under the scope lock; once it committed, the anchor moves to the newest version its statements drew. */
+  private async lockedWrite<T>(scope: Scope, operation: (query: Query, drew: (rows: Record<string, unknown>[]) => void) => Promise<T>): Promise<T> {
+    let drawn: Record<string, unknown>[] | undefined;
+    const value = await this.locked(scope, query =>
+      operation(query, rows => {
+        drawn = rows;
+      })
+    );
+    await this.advance(scope, drawn);
+    return value;
+  }
   async assertAccess(actor: Actor, scope: Scope, action: Action, id?: string): Promise<void> {
     const c = checkedMemoryScope(actor, scope);
     if (
@@ -500,12 +557,14 @@ export class PostgresAgentMemory {
     const safe = [...unique].map(([id, revision]) => ({ id, revision }));
     for (const hit of safe) await this.permit(c.actor, c.scope, 'read', hit.id);
     await this.permit(c.actor, c.scope, 'list');
+    await this.checkAnchor(c.scope);
     await this.checkCurrent(c.scope, safe);
   }
   async get(actor: Actor, scope: Scope, id: string): Promise<RecordValue | undefined> {
     const c = checkedMemoryScope(actor, scope);
     if (!validMemoryId(id)) throw Error('Invalid memory ID');
     await this.permit(c.actor, c.scope, 'read', id);
+    await this.checkAnchor(c.scope);
     const args = [...this.args(c.scope), id],
       sql = `SELECT * FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id=$6`,
       result = await this.options.query(sql, args);
@@ -539,7 +598,8 @@ export class PostgresAgentMemory {
       expires = options.expiresAt,
       expected = options.expectedRevision;
     await this.permit(c.actor, c.scope, 'write', id);
-    return this.locked(c.scope, async query => {
+    await this.checkAnchor(c.scope);
+    return this.lockedWrite(c.scope, async (query, drew) => {
       await this.permit(c.actor, c.scope, 'write', id);
       const now = this.now();
       if (expires <= now || expires - now > this.options.maxTtlMs) throw Error('Invalid memory expiration');
@@ -557,7 +617,7 @@ export class PostgresAgentMemory {
       if (!live && Number(counts.live) >= this.options.maxEntries) throw Error('Memory quota exceeded');
       const revision = (prior ? Number(prior.revision) : 0) + 1;
       if (!Number.isSafeInteger(revision) || revision < 1) throw Error('Invalid memory revision');
-      await query(
+      const inserted = await query(
         'INSERT INTO app_mixer_agent_memories VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE) ON CONFLICT (tenant_id,agent_id,owner_kind,owner_id,memory_kind,' +
           'memory_id) DO UPDATE SET revision=EXCLUDED.revision,value=EXCLUDED.value,provenance=EXCLUDED.provenance,expires_at=EXCLUDED.expires_at,' +
           '' +
@@ -598,9 +658,12 @@ export class PostgresAgentMemory {
           '' +
           '' +
           '' +
-          'deleted=FALSE',
+          'deleted=FALSE' +
+          this.bump +
+          (this.options.versionAnchor ? ' RETURNING version' : ''),
         [...args, id, revision, serialized, provenance, expires]
       );
+      drew(inserted.rows);
       await this.audit(query, c.actor, c.scope, 'write', id, revision, 1, now);
       return { id, revision, value: JSON.parse(serialized), provenance: JSON.parse(provenance) as Provenance, expiresAt: expires };
     });
@@ -609,15 +672,17 @@ export class PostgresAgentMemory {
     const c = checkedMemoryScope(actor, scope);
     if (!validMemoryId(id) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 || expectedRevision >= Number.MAX_SAFE_INTEGER) throw Error('Invalid memory delete');
     await this.permit(c.actor, c.scope, 'delete', id);
-    await this.locked(c.scope, async query => {
+    await this.checkAnchor(c.scope);
+    await this.lockedWrite(c.scope, async (query, drew) => {
       await this.permit(c.actor, c.scope, 'delete', id);
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} AND memory_id=$6 AND revision=$7 AND NOT deleted AND 
-            expires_at>$8 RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET revision=revision+1,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE${this.bump} WHERE ${scopeWhere} AND memory_id=$6 AND revision=$7 AND NOT deleted
+            AND expires_at>$8 RETURNING memory_id${this.returned}`,
           [...this.args(c.scope), id, expectedRevision, now]
         );
       if (result.rows.length !== 1) throw Error('Memory revision conflict');
+      drew(result.rows);
       await this.audit(query, c.actor, c.scope, 'delete', id, expectedRevision + 1, 1, now);
     });
   }
@@ -627,6 +692,7 @@ export class PostgresAgentMemory {
       limit = options?.limit ?? 100;
     if (!options || (after !== '' && !validMemoryId(after)) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid memory listing');
     await this.permit(c.actor, c.scope, 'list');
+    await this.checkAnchor(c.scope);
     const rows = (
         await this.options.query(`SELECT memory_id FROM app_mixer_agent_memories WHERE ${scopeWhere} AND memory_id>$6 AND NOT deleted AND expires_at>$7 ORDER BY memory_id`, [
           ...this.args(c.scope),
@@ -675,6 +741,7 @@ export class PostgresAgentMemory {
     )
       throw Error('Invalid indexed memory search');
     await this.permit(c.actor, c.scope, 'list');
+    await this.checkAnchor(c.scope);
     const rows = (
       await this.options.query(
         `SELECT memory_id,revision,ts_rank(to_tsvector('simple'::regconfig,COALESCE(value::jsonb->>'text','')),plainto_tsquery('simple'::regconfig,$7)) AS score FROM app_mixer_agent_memories WHERE 
@@ -737,6 +804,7 @@ export class PostgresAgentMemory {
       throw Error('Invalid indexed memory search');
     const encoded = JSON.stringify(vector);
     await this.permit(c.actor, c.scope, 'list');
+    await this.checkAnchor(c.scope);
     const expression = vectorExpression(config.dimensions, config.scope),
       filter = config.scope ? ' AND ' + scopedPredicate(config.scope) : '',
       distance = `${expression} OPERATOR(public.<=>) $7::public.vector(${config.dimensions})`,
@@ -796,17 +864,20 @@ export class PostgresAgentMemory {
     check();
     await this.permit(c.actor, c.scope, 'purge');
     check();
-    return this.locked(c.scope, async query => {
+    await this.checkAnchor(c.scope);
+    check();
+    return this.lockedWrite(c.scope, async (query, drew) => {
       check();
       await this.permit(c.actor, c.scope, 'purge');
       check();
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} 
-            AND NOT deleted AND expires_at<=$6 RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET ${tombstone}${this.bump} WHERE ${scopeWhere} 
+            AND NOT deleted AND expires_at<=$6 RETURNING memory_id${this.returned}`,
           [...this.args(c.scope), now]
         );
       check();
+      drew(result.rows);
       if (result.rows.length) await this.audit(query, c.actor, c.scope, 'purge', null, null, result.rows.length, now);
       check();
       return result.rows.length;
@@ -822,18 +893,21 @@ export class PostgresAgentMemory {
     check();
     await this.permit(c.actor, c.scope, 'erase');
     check();
-    return this.locked(c.scope, async query => {
+    await this.checkAnchor(c.scope);
+    check();
+    return this.lockedWrite(c.scope, async (query, drew) => {
       check();
       await this.permit(c.actor, c.scope, 'erase');
       check();
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} 
-            AND NOT deleted RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET ${tombstone}${this.bump} WHERE ${scopeWhere} 
+            AND NOT deleted RETURNING memory_id${this.returned}`,
           [...this.args(c.scope)]
         );
       check();
       if (!Array.isArray(result.rows)) throw Error('Invalid memory result');
+      drew(result.rows);
       if (result.rows.length) await this.audit(query, c.actor, c.scope, 'erase', null, null, result.rows.length, now);
       check();
       return result.rows.length;
@@ -850,7 +924,9 @@ export class PostgresAgentMemory {
     check();
     await this.permit(c.actor, c.scope, 'erase');
     check();
-    return this.locked(c.scope, async query => {
+    await this.checkAnchor(c.scope);
+    check();
+    return this.lockedWrite(c.scope, async (query, drew) => {
       check();
       await this.permit(c.actor, c.scope, 'erase');
       check();
@@ -870,12 +946,13 @@ export class PostgresAgentMemory {
       if (!Array.isArray(totals) || totals.length !== 1 || !Number.isSafeInteger(total) || total < 0 || total >= 10000) throw Error('Memory erasure request limit reached');
       const now = this.now(),
         result = await query(
-          `UPDATE app_mixer_agent_memories SET revision=CASE WHEN revision<9007199254740991 THEN revision+1 ELSE revision END,value=NULL,provenance=NULL,expires_at=0,deleted=TRUE WHERE ${scopeWhere} 
-            AND NOT deleted RETURNING memory_id`,
+          `UPDATE app_mixer_agent_memories SET ${tombstone}${this.bump} WHERE ${scopeWhere} 
+            AND NOT deleted RETURNING memory_id${this.returned}`,
           args
         );
       check();
       if (!Array.isArray(result.rows)) throw Error('Invalid memory result');
+      drew(result.rows);
       const count = result.rows.length;
       if (count) await this.audit(query, c.actor, c.scope, 'erase', null, null, count, now);
       check();
@@ -895,6 +972,7 @@ export class PostgresAgentMemory {
     check();
     await this.permit(c.actor, c.scope, 'erase-audit', requestId);
     check();
+    await this.checkAnchor(c.scope);
     const result = await this.options.query(`SELECT actor_id,count FROM app_mixer_memory_erasure_requests WHERE ${scopeWhere} AND request_id=$6`, [...this.args(c.scope), requestId]);
     check();
     if (!Array.isArray(result.rows) || result.rows.length > 1) throw Error('Invalid memory erasure request record');
@@ -912,6 +990,7 @@ export class PostgresAgentMemory {
       limit = options?.limit ?? 50;
     if (!this.options.audit || !options || !Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error('Invalid memory audit listing');
     await this.permit(c.actor, c.scope, 'audit');
+    await this.checkAnchor(c.scope);
     const rows = (
       await this.options.query(`SELECT id,actor_id,action,memory_id,revision,count,observed_at FROM app_mixer_agent_memory_audit WHERE ${scopeWhere} AND id>$6 ORDER BY id LIMIT $7`, [
         ...this.args(c.scope),

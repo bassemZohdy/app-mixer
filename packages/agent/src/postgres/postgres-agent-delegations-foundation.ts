@@ -2,8 +2,15 @@ import type { AgentDelegation } from '../configured-runtime.js';
 import type { AgentRunScope } from '../runs/durable-runs.js';
 import type { AgentDelegationActor, AgentDelegationAccess, AgentDelegationRecord, AgentDelegationStoreOptions } from '../runs/agent-delegations.js';
 import { PostgresAgentActionJournalFoundation } from './postgres-action-journal-foundation.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor, type AnchorErrorHandler, type AuditSequenceAnchor } from '@app-mixer/shared';
 type Query = (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
-type Options = Omit<AgentDelegationStoreOptions, 'clock'> & { query: Query; transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T> };
+type Options = Omit<AgentDelegationStoreOptions, 'clock'> & {
+  query: Query;
+  transaction: <T>(operation: (query: Query) => Promise<T>) => Promise<T>;
+  /** A high-water mark of the newest delegation event, held outside the database (ADR 0014). A restored older database is then refused, so a revoked grant stays revoked. */
+  versionAnchor?: AuditSequenceAnchor;
+  onAnchorError?: AnchorErrorHandler;
+};
 const valid = (x: unknown): x is string => typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(x),
   integer = (x: unknown): x is number => Number.isSafeInteger(x) && Number(x) >= 0;
 /** Experimental host-authorized grants bound to one shared run. */
@@ -15,6 +22,8 @@ export class PostgresAgentDelegationsFoundation {
   private readonly authorize: Options['authorize'];
   private readonly timeout?: number | undefined;
   private readonly maxPending?: number | undefined;
+  private readonly anchor: AuditSequenceAnchor | undefined;
+  private readonly onAnchorError: AnchorErrorHandler | undefined;
   private pending = 0;
   constructor(options: Options) {
     if (
@@ -28,7 +37,9 @@ export class PostgresAgentDelegationsFoundation {
       typeof options.authorize !== 'function' ||
       (options.timeoutMs === undefined) !== (options.maxPending === undefined) ||
       (options.timeoutMs !== undefined && (!integer(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 30000)) ||
-      (options.maxPending !== undefined && (!integer(options.maxPending) || options.maxPending < 1 || options.maxPending > 100))
+      (options.maxPending !== undefined && (!integer(options.maxPending) || options.maxPending < 1 || options.maxPending > 100)) ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
     )
       throw Error('Invalid delegation configuration');
     this.scope = { tenantId: options.scope.tenantId, agentId: options.scope.agentId };
@@ -38,6 +49,31 @@ export class PostgresAgentDelegationsFoundation {
     this.authorize = options.authorize;
     this.timeout = options.timeoutMs;
     this.maxPending = options.maxPending;
+    this.anchor = options.versionAnchor;
+    this.onAnchorError = options.onAnchorError;
+  }
+  /** Refuses to answer when the newest delegation event of this agent is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(): Promise<void> {
+    if (!this.anchor) return;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: agentAnchorKey('agent-delegations', this.scope.tenantId, this.scope.agentId),
+      unavailable: 'Agent delegations anchor unavailable',
+      rolledBack: 'Agent delegations were rolled back',
+      onError: this.onAnchorError,
+      stored: async () => {
+        const result = await this.query('SELECT COALESCE(max(id),0) AS stored FROM app_mixer_shared_delegation_events WHERE tenant_id=$1 AND agent_id=$2', [this.scope.tenantId, this.scope.agentId]),
+          stored = Number(result.rows?.[0]?.stored);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || !integer(stored)) throw Error('Invalid delegation data');
+        return stored;
+      }
+    });
+  }
+  /** The change is committed; the anchor moves to the id of the event it recorded, and a failure leaves it behind until the next call catches it up. */
+  private async advance(eventId: number): Promise<void> {
+    if (!this.anchor || !eventId) return;
+    if (!integer(eventId) || eventId < 1) throw Error('Invalid delegation data');
+    await advanceAnchor(this.anchor, agentAnchorKey('agent-delegations', this.scope.tenantId, this.scope.agentId), eventId, this.onAnchorError);
   }
   isBoundTo(scope: AgentRunScope, runId: string): boolean {
     return !!scope && scope.tenantId === this.scope.tenantId && scope.agentId === this.scope.agentId && runId === this.runId;
@@ -187,6 +223,7 @@ export class PostgresAgentDelegationsFoundation {
           '$$',
         []
       );
+      if (this.anchor) await q('CREATE INDEX IF NOT EXISTS app_mixer_shared_delegation_events_newest ON app_mixer_shared_delegation_events(tenant_id,agent_id,id)', []);
     });
   }
   private actor(actor: AgentDelegationActor): AgentDelegationActor {
@@ -276,59 +313,63 @@ export class PostgresAgentDelegationsFoundation {
   private expiry(expiresAt: number, now: number, deadline: number): void {
     if (expiresAt <= now || expiresAt > deadline || expiresAt - now > 86400000) throw Error('Invalid delegation expiry');
   }
-  private async event(q: Query, actor: AgentDelegationActor, record: AgentDelegationRecord, event: string, now: number): Promise<void> {
-    const g = record.grant;
-    await q(
-      'INSERT INTO app_mixer_shared_delegation_events (tenant_id,agent_id,run_id,grant_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at) VALUES ($1,$2,$3,$4,$5,$6,' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '$7,$8,$9,$10,$11)',
-      [...this.args(), g.grantId, record.revision, event, actor.principalId, g.principalId, g.permissionVersion, g.expiresAt, now]
-    );
+  private async event(q: Query, actor: AgentDelegationActor, record: AgentDelegationRecord, event: string, now: number): Promise<number> {
+    const g = record.grant,
+      result = await q(
+        'INSERT INTO app_mixer_shared_delegation_events (tenant_id,agent_id,run_id,grant_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at) VALUES ($1,$2,$3,$4,$5,$6,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$7,$8,$9,$10,$11)' +
+          (this.anchor ? ' RETURNING id' : ''),
+        [...this.args(), g.grantId, record.revision, event, actor.principalId, g.principalId, g.permissionVersion, g.expiresAt, now]
+      );
+    return this.anchor ? Number(result.rows[0]?.id) : 0;
   }
   async issue(actor: AgentDelegationActor, grant: AgentDelegation, signal?: AbortSignal): Promise<AgentDelegationRecord> {
     const who = this.actor(actor),
       g = this.grant(grant);
     if (g.revision !== undefined) throw Error('Invalid delegation');
     await this.permit(who, 'issue', g, signal);
-    return this.transaction(async q => {
+    await this.checkAnchor();
+    let eventId = 0;
+    const saved = await this.transaction(async q => {
       const { now, deadline } = await this.run(q, true);
       signal?.throwIfAborted();
       this.expiry(g.expiresAt, now, deadline);
@@ -337,14 +378,17 @@ export class PostgresAgentDelegationsFoundation {
       if (!integer(n) || n >= 1000) throw Error('Delegation quota exceeded');
       await q('INSERT INTO app_mixer_shared_delegations VALUES ($1,$2,$3,$4,$5,$6,$7,1,false)', [...this.args(), g.grantId, g.principalId, g.permissionVersion, g.expiresAt]);
       const result = (await this.row(q, g.grantId))!;
-      await this.event(q, who, result, 'issued', now);
+      eventId = await this.event(q, who, result, 'issued', now);
       signal?.throwIfAborted();
       return result;
     });
+    await this.advance(eventId);
+    return saved;
   }
   async get(actor: AgentDelegationActor, grantId: string, signal?: AbortSignal): Promise<AgentDelegationRecord | undefined> {
     const who = this.actor(actor);
     if (!valid(grantId)) throw Error('Invalid delegation');
+    await this.checkAnchor();
     const before = await this.row(this.query, grantId);
     await this.permit(who, 'read', before?.grant ?? this.unknown(grantId), signal);
     if (!before) return undefined;
@@ -356,10 +400,12 @@ export class PostgresAgentDelegationsFoundation {
   async renew(actor: AgentDelegationActor, grantId: string, revision: number, permissionVersion: string, expiresAt: number, signal?: AbortSignal): Promise<AgentDelegationRecord> {
     const who = this.actor(actor);
     if (!valid(grantId) || !integer(revision) || revision < 1 || revision >= Number.MAX_SAFE_INTEGER || !valid(permissionVersion) || !integer(expiresAt)) throw Error('Invalid delegation renewal');
+    await this.checkAnchor();
     const before = await this.row(this.query, grantId);
     await this.permit(who, 'renew', before ? { ...before.grant, permissionVersion, expiresAt } : this.unknown(grantId), signal);
     if (!before) throw Error('Delegation not found');
-    return this.transaction(async q => {
+    let eventId = 0;
+    const saved = await this.transaction(async q => {
       const { now, deadline } = await this.run(q, true),
         current = await this.row(q, grantId);
       signal?.throwIfAborted();
@@ -373,18 +419,22 @@ export class PostgresAgentDelegationsFoundation {
         expiresAt
       ]);
       const result = (await this.row(q, grantId))!;
-      await this.event(q, who, result, 'renewed', now);
+      eventId = await this.event(q, who, result, 'renewed', now);
       signal?.throwIfAborted();
       return result;
     });
+    await this.advance(eventId);
+    return saved;
   }
   async revoke(actor: AgentDelegationActor, grantId: string, revision: number, signal?: AbortSignal): Promise<AgentDelegationRecord> {
     const who = this.actor(actor);
     if (!valid(grantId) || !integer(revision) || revision < 1 || revision >= Number.MAX_SAFE_INTEGER) throw Error('Invalid delegation');
+    await this.checkAnchor();
     const before = await this.row(this.query, grantId);
     await this.permit(who, 'revoke', before?.grant ?? this.unknown(grantId), signal);
     if (!before) throw Error('Delegation not found');
-    return this.transaction(async q => {
+    let eventId = 0;
+    const saved = await this.transaction(async q => {
       const { now } = await this.run(q, false),
         current = await this.row(q, grantId);
       signal?.throwIfAborted();
@@ -392,15 +442,18 @@ export class PostgresAgentDelegationsFoundation {
       if (current.revoked) throw Error('Delegation revoked');
       await q('UPDATE app_mixer_shared_delegations SET revoked=true,revision=revision+1 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND grant_id=$4', [...this.args(), grantId]);
       const result = (await this.row(q, grantId))!;
-      await this.event(q, who, result, 'revoked', now);
+      eventId = await this.event(q, who, result, 'revoked', now);
       signal?.throwIfAborted();
       return result;
     });
+    await this.advance(eventId);
+    return saved;
   }
   async verify(actor: AgentDelegationActor, grant: AgentDelegation, signal?: AbortSignal): Promise<boolean> {
     const who = this.actor(actor),
       g = this.grant(grant);
     await this.permit(who, 'verify', g, signal);
+    await this.checkAnchor();
     return this.transaction(async q => {
       let now: number;
       try {
@@ -425,6 +478,7 @@ export class PostgresAgentDelegationsFoundation {
     const who = this.actor(actor),
       g = this.grant(grant);
     await this.permit(who, 'verify', g, signal);
+    await this.checkAnchor();
     return this.transaction(async q => {
       let now: number;
       try {
@@ -456,6 +510,7 @@ export class PostgresAgentDelegationsFoundation {
       after = options?.after ?? 0,
       limit = options?.limit ?? 50;
     if (!valid(grantId) || !options || !integer(after) || !integer(limit) || limit < 1 || limit > 100) throw Error('Invalid delegation history');
+    await this.checkAnchor();
     const before = await this.row(this.query, grantId);
     await this.permit(who, 'history', before?.grant ?? this.unknown(grantId), signal);
     if (!before) throw Error('Delegation not found');

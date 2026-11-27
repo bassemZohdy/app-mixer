@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Operator tool for the file-based rollback anchors (release floor, revocation epoch, audit sequences, approval epoch). Needs `npm run build`.
+// Operator tool for the file-based rollback anchors (release floor, revocation epoch, audit sequences, approval epoch, offline recovery and executions, and the agent stores). Needs `npm run build`.
 //   node scripts/anchor-admin.mjs <directory> list
 //   node scripts/anchor-admin.mjs <directory> get <file>
 //   node scripts/anchor-admin.mjs <directory> set <file> <value> [--allow-lower --reason "<why>"]
@@ -7,6 +7,9 @@
 // Anchor files are named by a hash of what they protect, so use `key` to find one:
 //   key release-floor <tenant> <application> <environment>   key jwt-revocations <issuer>   key extension-approvals <tenant> <application>
 //   key capability-audit <tenant>                            key authentication-failures
+//   key offline-recovery <tenant> <application>              key offline-executions <tenant> <application>
+//   key agent-definitions|agent-runs|agent-memory|agent-approvals|agent-delegations|agent-cost-budget <tenant> <agent>
+//   key agent-shared-cost <tenant> <budget>
 // Raising an anchor is always allowed. Lowering one removes the protection a restored database was refused by, so it needs `--allow-lower` and
 // a `--reason` (at least eight characters). Every change is logged to `anchor-admin.log` in the directory as JSON lines: an `intent` line
 // is written first and the change is made only if that write succeeded, then an `applied` line records the outcome. Writes use the same lock
@@ -21,9 +24,12 @@ import {
   capabilityAuditAnchorKey,
   jwtRevocationAnchorKey,
   extensionApprovalAnchorKey,
+  offlineRecoveryAnchorKey,
+  offlineExecutionAnchorKey,
   releaseFloorAnchorKey,
   authenticationFailureAnchorKey
 } from '../packages/core/dist/index.js';
+import { agentAnchorKey } from '../packages/shared/dist/index.js';
 
 const name = /^([A-Za-z0-9][A-Za-z0-9._-]{0,200})\.(floor|sequence)$/;
 const usage = 'Usage: anchor-admin.mjs <directory> list|get <file>|set <file> <value> [--allow-lower --reason "<why>"]  or  anchor-admin.mjs key <kind> <identifiers...>';
@@ -38,6 +44,14 @@ const keys = {
   'jwt-revocations': [1, issuer => jwtRevocationAnchorKey(issuer) + '.sequence'],
   'extension-approvals': [2, (t, a) => extensionApprovalAnchorKey(t, a) + '.sequence'],
   'capability-audit': [1, tenant => capabilityAuditAnchorKey(tenant) + '.sequence'],
+  'offline-recovery': [2, (t, a) => offlineRecoveryAnchorKey(t, a) + '.sequence'],
+  'offline-executions': [2, (t, a) => offlineExecutionAnchorKey(t, a) + '.sequence'],
+  ...Object.fromEntries(
+    ['agent-definitions', 'agent-runs', 'agent-memory', 'agent-approvals', 'agent-delegations', 'agent-cost-budget', 'agent-shared-cost'].map(kind => [
+      kind,
+      [2, (t, a) => agentAnchorKey(kind, t, a) + '.sequence']
+    ])
+  ),
   'authentication-failures': [0, () => authenticationFailureAnchorKey + '.sequence']
 };
 export async function run(argv, now = () => Date.now()) {

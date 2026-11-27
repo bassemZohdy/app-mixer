@@ -5,7 +5,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, chmodSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFileSequenceAnchor, createFileReleaseFloorAnchor, releaseFloorAnchorKey, authenticationFailureAnchorKey, capabilityAuditAnchorKey } from '../../core/dist/index.js';
+import {
+  createFileSequenceAnchor,
+  createFileReleaseFloorAnchor,
+  releaseFloorAnchorKey,
+  authenticationFailureAnchorKey,
+  capabilityAuditAnchorKey,
+  offlineRecoveryAnchorKey,
+  offlineExecutionAnchorKey
+} from '../../core/dist/index.js';
+import { agentAnchorKey } from '../../shared/dist/index.js';
 
 const script = fileURLToPath(new URL('../../../scripts/anchor-admin.mjs', import.meta.url));
 const cli = (...args) =>
@@ -32,7 +41,19 @@ test('anchor-admin finds anchor files by key, lists, reads and raises them, and 
     assert.deepEqual(JSON.parse((await cli('key', 'release-floor', 't', 'a', 'prod')).stdout), { file: floorFile });
     assert.deepEqual(JSON.parse((await cli('key', 'authentication-failures')).stdout), { file: authenticationFailureAnchorKey + '.sequence' });
     assert.deepEqual(JSON.parse((await cli('key', 'capability-audit', 'tenant/with slash')).stdout), { file: capabilityAuditAnchorKey('tenant/with slash') + '.sequence' });
+    // TASK-052.3: the offline recovery and executions anchors are found by tenant and application.
+    assert.deepEqual(JSON.parse((await cli('key', 'offline-recovery', 'tenant', 'app')).stdout), { file: offlineRecoveryAnchorKey('tenant', 'app') + '.sequence' });
+    assert.deepEqual(JSON.parse((await cli('key', 'offline-executions', 'tenant', 'app')).stdout), { file: offlineExecutionAnchorKey('tenant', 'app') + '.sequence' });
+    // TASK-047.5: the agent stores' anchors are found by tenant and agent, and the files they write are the files the tool lists.
+    for (const kind of ['agent-definitions', 'agent-runs', 'agent-memory', 'agent-approvals', 'agent-delegations', 'agent-cost-budget', 'agent-shared-cost'])
+      assert.deepEqual(JSON.parse((await cli('key', kind, 'tenant', 'agent')).stdout), { file: agentAnchorKey(kind, 'tenant', 'agent') + '.sequence' }, kind);
     for (const bad of [
+      ['key', 'agent-runs', 'tenant'],
+      ['key', 'agent-shared-cost', 'tenant'],
+      ['key', 'agent-shared-cost', 'tenant', 'budget', 'extra'],
+      ['key', 'agent-memory', 'tenant', 'agent', 'extra'],
+      ['key', 'offline-recovery', 'tenant'],
+      ['key', 'offline-executions', 'tenant', 'app', 'extra'],
       ['key', 'release-floor', 't', 'a'],
       ['key', 'unknown'],
       ['key', 'jwt-revocations'],

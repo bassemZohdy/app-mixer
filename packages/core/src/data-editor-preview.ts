@@ -199,6 +199,26 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
       ...(schema.multipleOf === undefined ? {} : { multipleOf: schema.multipleOf })
     };
   };
+  // \`readOnly\` must be a boolean. \`default\` must be a JSON scalar, or null for a nullable property, that satisfies the property's own
+  // rules (type, enum or const, bounds, length, pattern and the bounded combinators), so the form never offers a value the server would refuse.
+  const annotations = (spec, nullable) => {
+    if (spec.readOnly !== undefined && typeof spec.readOnly !== 'boolean') throw Error('Unsupported record JSON Schema form');
+    let jsonDefault;
+    if (Object.hasOwn(spec, 'default')) {
+      const value = spec.default;
+      if (value === null ? !nullable : !['string', 'number', 'boolean'].includes(typeof value)) throw Error('Unsupported record JSON Schema form');
+      if (value !== null) {
+        const rules = {};
+        for (const key of ['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else'])
+          if (Object.hasOwn(spec, key)) rules[key] = spec[key];
+        if (spec.type !== 'mixed') rules.type = spec.type;
+        if (spec._choices !== undefined) rules.enum = [...spec._choices];
+        if (!matchesContains(compileContains(rules, 0), value)) throw Error('Unsupported record JSON Schema form');
+      }
+      jsonDefault = value;
+    }
+    return { ...(jsonDefault === undefined ? {} : { jsonDefault }), ...(spec.readOnly === true ? { jsonReadOnly: true } : {}) };
+  };
   const scalarType = type =>
     Array.isArray(type) && type.length === 2 && type.includes('null') && new Set(type).size === 2 && type.some(value => ['string', 'number', 'integer', 'boolean', 'object', 'array'].includes(value))
       ? { type: type.find(value => value !== 'null'), nullable: true }
@@ -879,7 +899,9 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
             'not',
             'if',
             'then',
-            'else'
+            'else',
+            'default',
+            'readOnly'
           ]) ||
           !['string', 'number', 'integer', 'boolean', 'null', 'mixed'].includes(scalarType(schemaScalar(property.items).type).type) ||
           (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120))
@@ -890,7 +912,23 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           minItems = property.minItems === undefined ? 0 : property.minItems,
           maxItems = property.maxItems === undefined ? 50 : property.maxItems;
         if (
-          !keys(spec, ['type', 'title', 'description', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', '_nullable', '_choices']) ||
+          !keys(spec, [
+            'type',
+            'title',
+            'description',
+            'minimum',
+            'maximum',
+            'exclusiveMinimum',
+            'exclusiveMaximum',
+            'multipleOf',
+            'minLength',
+            'maxLength',
+            'pattern',
+            '_nullable',
+            '_choices',
+            'default',
+            'readOnly'
+          ]) ||
           (property.uniqueItems !== undefined && typeof property.uniqueItems !== 'boolean') ||
           !Number.isSafeInteger(minItems) ||
           !Number.isSafeInteger(maxItems) ||
@@ -922,7 +960,8 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           itemTitle: spec.title,
           ...(spec.description === undefined ? {} : { description: spec.description }),
           ...numericConstraints(spec, numeric),
-          ...(spec._choices === undefined ? {} : { jsonChoices: [...spec._choices] })
+          ...(spec._choices === undefined ? {} : { jsonChoices: [...spec._choices] }),
+          ...annotations(spec, spec._nullable === true || spec.type === 'null')
         };
         if (spec._nullable || spec.type === 'null') item = { ...item, nullable: true };
         const itemPattern = pattern(spec.pattern, spec.type);
@@ -950,7 +989,7 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
       }
       if (property.type === 'mixed') {
         if (
-          !keys(property, ['type', 'title', 'description', '_nullable', '_choices']) ||
+          !keys(property, ['type', 'title', 'description', '_nullable', '_choices', 'default', 'readOnly']) ||
           (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
           (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024))
         )
@@ -965,6 +1004,7 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           required: requiredField,
           jsonChoices: [...property._choices],
           nullable: property._nullable === true,
+          ...annotations(property, property._nullable === true),
           ...(property.description === undefined ? {} : { description: property.description })
         });
         if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
@@ -972,19 +1012,44 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
       }
       if (property.type === 'null') {
         if (
-          !keys(property, ['type', 'title', 'description']) ||
+          !keys(property, ['type', 'title', 'description', 'default', 'readOnly']) ||
           (property.title !== undefined && (typeof property.title !== 'string' || !property.title.trim() || property.title.length > 120)) ||
           (property.description !== undefined && (typeof property.description !== 'string' || property.description.length > 1024))
         )
           throw Error('Unsupported record JSON Schema form');
         const label = [...labels, name].join(' / ');
         if (!label.trim() || label.length > 120) throw Error('Unsupported record JSON Schema form');
-        fields.push({ key, label, type: 'null', path: next, required: requiredField, nullable: true, ...(property.description === undefined ? {} : { description: property.description }) });
+        fields.push({
+          key,
+          label,
+          type: 'null',
+          path: next,
+          required: requiredField,
+          nullable: true,
+          ...annotations(property, true),
+          ...(property.description === undefined ? {} : { description: property.description })
+        });
         if (fields.length > 40) throw Error('Unsupported record JSON Schema form');
         continue;
       }
       if (
-        !keys(property, ['type', 'title', 'description', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'pattern', '_nullable', '_choices']) ||
+        !keys(property, [
+          'type',
+          'title',
+          'description',
+          'minimum',
+          'maximum',
+          'exclusiveMinimum',
+          'exclusiveMaximum',
+          'multipleOf',
+          'minLength',
+          'maxLength',
+          'pattern',
+          '_nullable',
+          '_choices',
+          'default',
+          'readOnly'
+        ]) ||
         !['string', 'number', 'integer', 'boolean'].includes(property.type) ||
         (property.title !== undefined && typeof property.title !== 'string')
       )
@@ -1016,6 +1081,7 @@ function fieldsFromJsonSchema(jsonSchema, context = { nodes: 0 }, arrayDepth = 0
           ...(property._choices === undefined ? {} : { jsonChoices: [...property._choices] }),
           ...(fieldPattern ? { jsonPattern: fieldPattern } : {}),
           ...(property._nullable ? { nullable: true } : {}),
+          ...annotations(property, property._nullable === true),
           ...(property.type === 'string'
             ? {
                 jsonString: true,
@@ -1074,11 +1140,11 @@ function fieldControl(document,field) {
   }
   const label=document.createElement('label'),title=document.createElement('span'),error=document.createElement('small'),control=field.type==='boolean'||field.options||field.jsonChoices?document.createElement('select'):document.createElement('input');
   label.style.display='block';label.style.margin='0.75rem 0';title.style.display='block';control.style.display='block';control.style.width='100%';control.style.maxWidth='28rem';control.style.boxSizing='border-box';error.style.display='block';
-  title.textContent=field.label+(field.required?' (required)':' (optional)');label.appendChild(title);
+  title.textContent=field.label+(field.jsonReadOnly?' (read-only)':field.required?' (required)':' (optional)');label.appendChild(title);
   if(control.tagName==='SELECT'){const choices=field.jsonChoices??(field.type==='boolean'?['true','false']:field.options);const blank=document.createElement('option');blank.value='';blank.textContent='Select an option';control.appendChild(blank);for(let index=0;index<choices.length;index++){const choice=choices[index],option=document.createElement('option');option.value=field.jsonChoices?String(index+1):choice;option.textContent=typeof choice==='boolean'?(choice?'Yes':'No'):field.type==='boolean'?(choice==='true'?'Yes':'No'):choice===''?'(empty)':String(choice);if(field.type==='mixed')option.textContent+=' ('+(typeof choice==='string'?'text':typeof choice)+')';control.appendChild(option);}}
   else {control.type=field.type==='string'?'text':'number';if(field.type==='number')control.step='any';if(field.type==='integer')control.step='1';if(field.maxLength!==undefined)control.maxLength=field.maxLength;}
-  control.required=field.required;error.setAttribute('role','alert');label.append(control);if(field.description){const help=document.createElement('span');const key=Symbol.for('app-mixer.field-help-counter');let n=document[key]??0,id;do{id='app-mixer-field-help-'+(++n);}while(document.getElementById(id)||document.getElementById('app-mixer-field-label-'+n));document[key]=n;title.id='app-mixer-field-label-'+n;help.id=id;help.textContent=field.description;control.setAttribute('aria-labelledby',title.id);control.setAttribute('aria-describedby',id);label.appendChild(help);}label.appendChild(error);
-  let include,nullToggle,wrapper,disabled=false,includeText,nullText;const setLabel=value=>{if(field.label===value)return;field.label=value;title.textContent=value+(field.required?' (required)':' (optional)');if(includeText)includeText.textContent=' Include '+value;if(nullText)nullText.textContent=' Set '+value+' to null';};
+  control.required=field.required&&!field.jsonReadOnly;error.setAttribute('role','alert');label.append(control);if(field.description){const help=document.createElement('span');const key=Symbol.for('app-mixer.field-help-counter');let n=document[key]??0,id;do{id='app-mixer-field-help-'+(++n);}while(document.getElementById(id)||document.getElementById('app-mixer-field-label-'+n));document[key]=n;title.id='app-mixer-field-label-'+n;help.id=id;help.textContent=field.description;control.setAttribute('aria-labelledby',title.id);control.setAttribute('aria-describedby',id);label.appendChild(help);}label.appendChild(error);
+  let include,nullToggle,wrapper,disabled=false,includeText,nullText;const setLabel=value=>{if(field.label===value)return;field.label=value;title.textContent=value+(field.jsonReadOnly?' (read-only)':field.required?' (required)':' (optional)');if(includeText)includeText.textContent=' Include '+value;if(nullText)nullText.textContent=' Set '+value+' to null';};
   if(field.jsonString||field.nullable||field.jsonChoices){if(field.jsonString&&!field.required||field.nullable){wrapper=document.createElement('div');if(field.jsonString&&!field.required){const includeLabel=document.createElement('label');include=document.createElement('input');include.type='checkbox';includeText=document.createTextNode(' Include '+field.label);includeLabel.append(include,includeText);wrapper.appendChild(includeLabel);}if(field.nullable){const nullLabel=document.createElement('label');nullToggle=document.createElement('input');nullToggle.type='checkbox';nullText=document.createTextNode(' Set '+field.label+' to null');nullLabel.append(nullToggle,nullText);wrapper.appendChild(nullLabel);}wrapper.appendChild(label);}const update=()=>{if(include)include.disabled=disabled;if(nullToggle)nullToggle.disabled=disabled||(include&&!include.checked);control.disabled=disabled||(include&&!include.checked)||(nullToggle&&nullToggle.checked);};for(const toggle of [include,nullToggle])toggle?.addEventListener('change',()=>{update();control.dispatchEvent(new document.defaultView.Event('input',{bubbles:true}));});return {field,control,error,dirty:false,include,nullToggle,wrapper,setLabel,setDisabled(value){disabled=value;update();},setValue(value){if(include)include.checked=value!==undefined;if(nullToggle)nullToggle.checked=value===null;control.value=value===undefined||value===null?'':field.jsonChoices?String(field.jsonChoices.indexOf(value)+1):String(value);update();}};}
   return {field,control,error,dirty:false,setLabel};
 }

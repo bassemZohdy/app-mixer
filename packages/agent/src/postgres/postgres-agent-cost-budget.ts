@@ -2,12 +2,14 @@ import type { AgentRunScope } from '../runs/durable-runs.js';
 import { POSTGRES_NOW as NOW, type PostgresAgentRunsOptions, type PostgresRunQuery as Query } from './postgres-agent-runs.js';
 import { AgentError } from '../errors.js';
 import { isIdentifier } from '../validation.js';
+import { agentAnchorKey, advanceAnchor, checkAgainstAnchor } from '@app-mixer/shared';
 
 export type PostgresCostCall = { runId: string; callId: string; day: number; reserved: number; used: number | null; status: 'reserved' | 'settled' };
 export type PostgresCostSummary = { currency: string; limit: number; day: number; committed: number; reserved: number; overrun: boolean };
 const id = isIdentifier;
 const micros = (value: unknown, max = 100000000000): value is number => Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= max;
 const DAY = 86400000;
+const versionSequence = 'app_mixer_agent_cost_version';
 function key(scope: AgentRunScope): [string, string] {
   if (!scope || !id(scope.tenantId) || !id(scope.agentId)) throw Error('Invalid cost scope');
   return [scope.tenantId, scope.agentId];
@@ -23,10 +25,56 @@ function key(scope: AgentRunScope): [string, string] {
 export class PostgresAgentCostBudget {
   private readonly query: Query;
   private readonly transaction: PostgresAgentRunsOptions['transaction'];
+  private readonly anchor: PostgresAgentRunsOptions['versionAnchor'];
+  private readonly onAnchorError: PostgresAgentRunsOptions['onAnchorError'];
+  /** With an anchor every change draws a new version from the sequence in the same statement; without one the statements are unchanged. */
+  private readonly bump: string;
+  private readonly returned: string;
   constructor(options: PostgresAgentRunsOptions) {
-    if (!options || options.enabled !== true || typeof options.query !== 'function' || typeof options.transaction !== 'function') throw Error('Invalid cost budget configuration');
+    if (
+      !options ||
+      options.enabled !== true ||
+      typeof options.query !== 'function' ||
+      typeof options.transaction !== 'function' ||
+      (options.versionAnchor !== undefined && (!options.versionAnchor || typeof options.versionAnchor.read !== 'function' || typeof options.versionAnchor.advance !== 'function')) ||
+      (options.onAnchorError !== undefined && typeof options.onAnchorError !== 'function')
+    )
+      throw Error('Invalid cost budget configuration');
     this.query = options.query;
     this.transaction = options.transaction;
+    this.anchor = options.versionAnchor;
+    this.onAnchorError = options.onAnchorError;
+    this.bump = this.anchor ? ",version=nextval('" + versionSequence + "')" : '';
+    this.returned = this.anchor ? ',version' : '';
+  }
+  /** Refuses to answer when the newest version of the budgets and the call ledger is below the anchored high-water mark, which means the database was restored to an older state. */
+  private async checkAnchor(tenantId: string, agentId: string): Promise<void> {
+    if (!this.anchor) return;
+    await checkAgainstAnchor({
+      anchor: this.anchor,
+      key: agentAnchorKey('agent-cost-budget', tenantId, agentId),
+      unavailable: 'Agent cost budget anchor unavailable',
+      rolledBack: 'Agent cost budget was rolled back',
+      onError: this.onAnchorError,
+      stored: async () => {
+        // The budget and its calls share one version stream, so the newest version of either table is what the anchor must not exceed.
+        const result = await this.query(
+          'SELECT GREATEST((SELECT COALESCE(max(version),0) FROM app_mixer_agent_cost_budgets WHERE tenant_id=$1 AND agent_id=$2),' +
+            '(SELECT COALESCE(max(version),0) FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2)) AS stored',
+          [tenantId, agentId]
+        );
+        const stored = Number(result.rows?.[0]?.stored);
+        if (!Array.isArray(result.rows) || result.rows.length !== 1 || !Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid cost budget result');
+        return stored;
+      }
+    });
+  }
+  /** The change is committed; a failure of the anchor leaves it behind until the next call catches it up. */
+  private async advance(tenantId: string, agentId: string, row: Record<string, unknown> | undefined): Promise<void> {
+    if (!this.anchor) return;
+    const version = Number(row?.version);
+    if (!Number.isSafeInteger(version) || version < 1) throw Error('Invalid cost budget result');
+    await advanceAnchor(this.anchor, agentAnchorKey('agent-cost-budget', tenantId, agentId), version, this.onAnchorError);
   }
   /** Requires PostgresAgentRuns.initialize(), which creates the call ledger. */
   async initialize(): Promise<void> {
@@ -74,20 +122,30 @@ export class PostgresAgentCostBudget {
         'agent_id))',
       []
     );
+    if (this.anchor) {
+      // A database that already holds budgets and calls gains the version column; its rows draw their versions from the sequence.
+      await this.query('CREATE SEQUENCE IF NOT EXISTS ' + versionSequence, []);
+      for (const table of ['app_mixer_agent_cost_budgets', 'app_mixer_agent_cost_calls']) {
+        await this.query('ALTER TABLE ' + table + " ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT nextval('" + versionSequence + "')", []);
+        await this.query('CREATE INDEX IF NOT EXISTS ' + table + '_newest ON ' + table + '(tenant_id,agent_id,version)', []);
+      }
+    }
   }
   /** Set or change an agent's daily limit (host-authorized). The currency cannot change once calls exist. */
   async configure(scope: AgentRunScope, budget: { currency: string; maxMicrosPerDay: number }): Promise<void> {
     const [tenantId, agentId] = key(scope);
     if (!budget || typeof budget.currency !== 'string' || !/^[A-Z]{3}$/.test(budget.currency) || !micros(budget.maxMicrosPerDay) || budget.maxMicrosPerDay < 1) throw Error('Invalid cost budget');
+    await this.checkAnchor(tenantId, agentId);
+    let drawn: Record<string, unknown> | undefined;
     await this.transaction(async query => {
       const current = (await query('SELECT currency FROM app_mixer_agent_cost_budgets WHERE tenant_id=$1 AND agent_id=$2 FOR UPDATE', [tenantId, agentId])).rows[0];
       if (current && current.currency !== budget.currency && (await query('SELECT 1 FROM app_mixer_agent_cost_calls WHERE tenant_id=$1 AND agent_id=$2 LIMIT 1', [tenantId, agentId])).rows.length)
         throw Error('Cost budget currency conflict');
-      await query(
-        'INSERT INTO app_mixer_agent_cost_budgets VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id,agent_id) DO UPDATE SET currency=EXCLUDED.currency,max_micros_per_day=EXCLUDED.max_micros_per_day',
-        [tenantId, agentId, budget.currency, budget.maxMicrosPerDay]
-      );
+      const upsert =
+        'INSERT INTO app_mixer_agent_cost_budgets VALUES ($1,$2,$3,$4) ON CONFLICT (tenant_id,agent_id) DO UPDATE SET currency=EXCLUDED.currency,max_micros_per_day=EXCLUDED.max_micros_per_day';
+      drawn = (await query(upsert + this.bump + (this.anchor ? ' RETURNING version' : ''), [tenantId, agentId, budget.currency, budget.maxMicrosPerDay])).rows[0];
     });
+    await this.advance(tenantId, agentId, drawn);
   }
   private async budget(query: Query, tenantId: string, agentId: string, lock: boolean): Promise<{ currency: string; limit: number }> {
     const row = (await query(`SELECT currency,max_micros_per_day FROM app_mixer_agent_cost_budgets WHERE tenant_id=$1 AND agent_id=$2${lock ? ' FOR UPDATE' : ''}`, [tenantId, agentId])).rows[0];
@@ -155,7 +213,9 @@ export class PostgresAgentCostBudget {
   async reserve(scope: AgentRunScope, runId: string, leaseToken: string, callId: string, costMicros: number): Promise<PostgresCostCall> {
     const [tenantId, agentId] = key(scope);
     if (!id(runId) || !id(leaseToken) || !id(callId) || !micros(costMicros) || costMicros < 1) throw Error('Invalid cost reservation');
-    return this.transaction(async query => {
+    await this.checkAnchor(tenantId, agentId);
+    let drawn: Record<string, unknown> | undefined;
+    const reserved = await this.transaction(async query => {
       const now = await this.fence(query, tenantId, agentId, runId, leaseToken),
         day = Math.floor(now / DAY) * DAY;
       // One lock per agent serializes admission across nodes, so the sum below cannot be read stale.
@@ -165,27 +225,33 @@ export class PostgresAgentCostBudget {
       const totals = await this.totals(query, tenantId, agentId, day);
       if (totals.overrun) throw Error('Cost provider limit violated');
       if (totals.committed + totals.reserved + costMicros > limit) throw Error('Cost budget exhausted');
-      await query("INSERT INTO app_mixer_agent_cost_calls VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved')", [tenantId, agentId, runId, callId, day, costMicros]);
+      const insert = "INSERT INTO app_mixer_agent_cost_calls VALUES ($1,$2,$3,$4,$5,$6,NULL,'reserved')" + (this.anchor ? ' RETURNING version' : '');
+      drawn = (await query(insert, [tenantId, agentId, runId, callId, day, costMicros])).rows[0];
       return { runId, callId, day, reserved: costMicros, used: null, status: 'reserved' as const };
     });
+    await this.advance(tenantId, agentId, drawn);
+    return reserved;
   }
   private async close(scope: AgentRunScope, runId: string, token: string | null, callId: string, usedMicros: number): Promise<PostgresCostCall> {
     const [tenantId, agentId] = key(scope);
     if (!id(runId) || (token !== null && !id(token)) || !id(callId) || !micros(usedMicros)) throw Error('Invalid cost usage');
-    return this.transaction(async query => {
+    await this.checkAnchor(tenantId, agentId);
+    let drawn: Record<string, unknown> | undefined;
+    const closed = await this.transaction(async query => {
       await this.fence(query, tenantId, agentId, runId, token);
-      const row = (
-        await query("UPDATE app_mixer_agent_cost_calls SET status='settled',used=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id=$4 AND status='reserved' RETURNING day,reserved", [
-          tenantId,
-          agentId,
-          runId,
-          callId,
-          usedMicros
-        ])
-      ).rows[0];
+      const settle =
+          "UPDATE app_mixer_agent_cost_calls SET status='settled',used=$5" +
+          this.bump +
+          ' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND call_id=$4 AND ' +
+          "status='reserved' RETURNING day,reserved" +
+          this.returned,
+        row = (await query(settle, [tenantId, agentId, runId, callId, usedMicros])).rows[0];
       if (!row) throw Error('Invalid cost call state');
+      drawn = row;
       return { runId, callId, day: Number(row.day), reserved: Number(row.reserved), used: usedMicros, status: 'settled' as const };
     });
+    await this.advance(tenantId, agentId, drawn);
+    return closed;
   }
   /** Record the provider-reported cost while holding the lease. */
   settle(scope: AgentRunScope, runId: string, leaseToken: string, callId: string, usedMicros: number): Promise<PostgresCostCall> {
@@ -199,6 +265,7 @@ export class PostgresAgentCostBudget {
   async summary(scope: AgentRunScope, day?: number): Promise<PostgresCostSummary> {
     const [tenantId, agentId] = key(scope);
     if (day !== undefined && (!micros(day, Number.MAX_SAFE_INTEGER) || day % DAY !== 0)) throw Error('Invalid cost day');
+    await this.checkAnchor(tenantId, agentId);
     const { currency, limit } = await this.budget(this.query, tenantId, agentId, false),
       selected = day ?? Math.floor(Number((await this.query(`SELECT ${NOW} AS now`, [])).rows[0]?.now) / DAY) * DAY;
     return { currency, limit, day: selected, ...(await this.totals(this.query, tenantId, agentId, selected)) };

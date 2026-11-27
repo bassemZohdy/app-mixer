@@ -291,6 +291,20 @@ test('FEAT-018 the Data Plane runtime image carries none of the package managers
   }
 });
 
+test('FIX-054 the Data Plane runtime image upgrades libpam before the image scan, and the docs say why the pinned base is not enough', () => {
+  // The pinned Node base had no patched libpam when the scan began refusing CVE-2025-6020, so the runtime stage upgrades just those packages.
+  const lines = read('Dockerfile.data-plane').replaceAll('\r\n', '\n').split('\n');
+  const runtimeStage = lines.slice(lines.findLastIndex(line => /^FROM /.test(line))).join('\n');
+  const upgrade = /^RUN apt-get update && apt-get install -y --no-install-recommends --only-upgrade ([^\n&]*)&& rm -rf \/var\/lib\/apt\/lists\/\*$/m.exec(runtimeStage);
+  assert.ok(upgrade, 'the runtime stage upgrades packages and clears the apt lists');
+  for (const name of ['libpam0g', 'libpam-modules', 'libpam-modules-bin', 'libpam-runtime']) assert.ok(upgrade[1].split(/\s+/).includes(name), 'upgrades ' + name);
+  assert.ok(upgrade.index < runtimeStage.indexOf('USER '), 'the upgrade runs as root, before the unprivileged user');
+  assert.ok(upgrade.index < runtimeStage.search(/^RUN rm -rf \/usr\/local\/lib\/node_modules/m), 'the upgrade runs before the package managers are removed');
+  const image = read('docs/kubernetes-data-plane.md').split('## Image contents')[1]?.split('\n## ')[0] ?? '';
+  assert.match(image, /libpam/, 'the image contents section names the libpam upgrade');
+  assert.match(image, /CVE-2025-6020/);
+});
+
 test('FIX-003 every Dockerfile builds from the same Node base image, newer than 22.13.0 and pinned by digest', () => {
   const dockerfiles = ['Dockerfile.data-plane', 'Dockerfile.local', 'deploy/kubernetes/test-support/agent-recovery/Dockerfile'],
     images = new Set();

@@ -11,7 +11,7 @@ if (configured !== undefined && (!/^[1-9]\d?$/.test(configured) || Number(config
   process.exitCode = 1;
 } else {
   const concurrency = configured ?? (process.platform === 'win32' ? Math.min(8, availableParallelism()) : '8');
-  const files = ['core', 'cli', 'web', 'native', 'agent'].flatMap(name => {
+  const files = ['core', 'cli', 'web', 'native', 'agent', 'shared'].flatMap(name => {
     const folder = join(root, 'packages', name, 'test');
     return readdirSync(folder, { withFileTypes: true })
       .filter(entry => entry.isFile() && entry.name.endsWith('.test.mjs'))
