@@ -316,50 +316,50 @@ export class PostgresAgentDelegationsFoundation {
   private async event(q: Query, actor: AgentDelegationActor, record: AgentDelegationRecord, event: string, now: number): Promise<number> {
     const g = record.grant,
       result = await q(
-      'INSERT INTO app_mixer_shared_delegation_events (tenant_id,agent_id,run_id,grant_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at) VALUES ($1,$2,$3,$4,$5,$6,' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '' +
-        '$7,$8,$9,$10,$11)' +
-        (this.anchor ? ' RETURNING id' : ''),
-      [...this.args(), g.grantId, record.revision, event, actor.principalId, g.principalId, g.permissionVersion, g.expiresAt, now]
-    );
+        'INSERT INTO app_mixer_shared_delegation_events (tenant_id,agent_id,run_id,grant_id,revision,event,actor_id,principal_id,permission_version,expires_at,event_at) VALUES ($1,$2,$3,$4,$5,$6,' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '' +
+          '$7,$8,$9,$10,$11)' +
+          (this.anchor ? ' RETURNING id' : ''),
+        [...this.args(), g.grantId, record.revision, event, actor.principalId, g.principalId, g.permissionVersion, g.expiresAt, now]
+      );
     return this.anchor ? Number(result.rows[0]?.id) : 0;
   }
   async issue(actor: AgentDelegationActor, grant: AgentDelegation, signal?: AbortSignal): Promise<AgentDelegationRecord> {

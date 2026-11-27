@@ -56,7 +56,10 @@ test('TASK-047.3 every read, listing and save of a restored definition store is 
     definitions = store(db, { versionAnchor: anchor });
   assert.equal(await definitions.get(actor, 'agent'), undefined);
   assert.equal(marks.get(key), 6, 'a database ahead of the anchor catches it up');
-  assert.match(db.statements.find(sql => /max\(version\)/i.test(sql)), /FROM app_mixer_agent_definitions /);
+  assert.match(
+    db.statements.find(sql => /max\(version\)/i.test(sql)),
+    /FROM app_mixer_agent_definitions /
+  );
   stored = 4;
   for (const refused of [
     () => definitions.get(actor, 'agent'),
@@ -69,11 +72,7 @@ test('TASK-047.3 every read, listing and save of a restored definition store is 
   ])
     await assert.rejects(refused(), /Agent definitions were rolled back/);
   assert.equal(marks.get(key), 6, 'a refusal never lowers the anchor');
-  assert.equal(
-    db.statements.filter(sql => /^INSERT INTO app_mixer_agent_definitions /.test(sql)).length,
-    0,
-    'a refused save writes nothing'
-  );
+  assert.equal(db.statements.filter(sql => /^INSERT INTO app_mixer_agent_definitions /.test(sql)).length, 0, 'a refused save writes nothing');
   const unreadable = store(db, {
     versionAnchor: {
       read: () => {

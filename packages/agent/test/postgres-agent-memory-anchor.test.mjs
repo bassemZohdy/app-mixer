@@ -58,7 +58,10 @@ test('TASK-047.3 every answer and write of a restored memory store is refused, n
     memory = store(db, { versionAnchor: anchor });
   assert.equal(await memory.get(actor, scope, 'k1'), undefined);
   assert.equal(marks.get(key), 20, 'a database ahead of the anchor catches it up');
-  assert.match(db.statements.find(sql => /max\(version\)/i.test(sql)), /FROM app_mixer_agent_memories /);
+  assert.match(
+    db.statements.find(sql => /max\(version\)/i.test(sql)),
+    /FROM app_mixer_agent_memories /
+  );
   stored = 15;
   const before = db.statements.length;
   for (const refused of [
@@ -102,7 +105,10 @@ test('TASK-047.3 a write draws its version in the same statement and the anchor 
   assert.equal(marks.get(key), 9);
   const erase = fake(() => 9, [10, 11, 12]);
   await store(erase, { versionAnchor: anchor }).eraseScope(actor, scope);
-  assert.match(erase.statements.find(sql => /^UPDATE app_mixer_agent_memories /.test(sql)), new RegExp(`deleted=TRUE,version=nextval\\('${sequence}'\\) WHERE [\\s\\S]* RETURNING memory_id,version$`));
+  assert.match(
+    erase.statements.find(sql => /^UPDATE app_mixer_agent_memories /.test(sql)),
+    new RegExp(`deleted=TRUE,version=nextval\\('${sequence}'\\) WHERE [\\s\\S]* RETURNING memory_id,version$`)
+  );
   assert.equal(marks.get(key), 12, 'the newest of the versions drawn by one statement');
   const del = fake(() => 12, [13]);
   await store(del, { versionAnchor: anchor }).delete(actor, scope, 'k1', 1);
@@ -113,15 +119,18 @@ test('TASK-047.3 a write draws its version in the same statement and the anchor 
   const purge = fake(() => 14, [15]);
   await store(purge, { versionAnchor: anchor }).purgeExpired(actor, scope);
   assert.equal(marks.get(key), 15);
-  const broken = store(fake(() => 0, [20]), {
-    versionAnchor: {
-      read: () => 0,
-      advance: () => {
-        throw Error('cannot write anchor');
-      }
-    },
-    onAnchorError: error => errors.push(error.message)
-  });
+  const broken = store(
+    fake(() => 0, [20]),
+    {
+      versionAnchor: {
+        read: () => 0,
+        advance: () => {
+          throw Error('cannot write anchor');
+        }
+      },
+      onAnchorError: error => errors.push(error.message)
+    }
+  );
   await broken.put(actor, scope, 'k2', 'v', { expectedRevision: null, ...keep() });
   assert.deepEqual(errors, ['cannot write anchor'], 'a write that committed is never undone by a failing anchor');
   const plain = fake(() => 0, [1]);

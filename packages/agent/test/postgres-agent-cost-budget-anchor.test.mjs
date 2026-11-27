@@ -90,15 +90,18 @@ test('TASK-047.4 configuring a budget draws its version in the same statement an
   const upsert = db.statements.find(sql => /^INSERT INTO app_mixer_agent_cost_budgets /.test(sql));
   assert.match(upsert, new RegExp(`max_micros_per_day=EXCLUDED.max_micros_per_day,version=nextval\\('${sequence}'\\) RETURNING version$`));
   assert.equal(marks.get(key), 7);
-  await store(fake(() => 0, 8), {
-    versionAnchor: {
-      read: () => 0,
-      advance: () => {
-        throw Error('cannot write anchor');
-      }
-    },
-    onAnchorError: error => errors.push(error.message)
-  }).configure(scope, { currency: 'USD', maxMicrosPerDay: 5000 });
+  await store(
+    fake(() => 0, 8),
+    {
+      versionAnchor: {
+        read: () => 0,
+        advance: () => {
+          throw Error('cannot write anchor');
+        }
+      },
+      onAnchorError: error => errors.push(error.message)
+    }
+  ).configure(scope, { currency: 'USD', maxMicrosPerDay: 5000 });
   assert.deepEqual(errors, ['cannot write anchor'], 'a change that committed is never undone by a failing anchor');
   const plain = fake();
   await store(plain).configure(scope, { currency: 'USD', maxMicrosPerDay: 5000 });
