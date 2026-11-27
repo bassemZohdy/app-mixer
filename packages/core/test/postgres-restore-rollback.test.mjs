@@ -355,6 +355,16 @@ test(
       const budgetMarks = anchorOf(),
         anchoredBudget = new PostgresAgentCostBudget({ enabled: true, ...base, versionAnchor: budgetMarks.anchor });
       await anchoredBudget.initialize();
+      // FEAT-053.1: the shared cost with its own anchor per tenant and budget; its call ledger gains the version column.
+      const sharedCostMarks = anchorOf(),
+        anchoredSharedCost = new PostgresAgentSharedCost({
+          enabled: true,
+          scope: { tenantId: 'tenant', budgetId: 'cycle-1', currency: 'USD', maxMicros: 1000 },
+          ...base,
+          authorize: () => true,
+          versionAnchor: sharedCostMarks.anchor
+        });
+      await anchoredSharedCost.initialize();
       // State A: what the backup captures.
       await definitions.save(actor, manifest('Operations'), 0);
       await memory.put(actor, memoryScope, 'k1', 'v1', { expectedRevision: null, ...keep() });
@@ -400,7 +410,7 @@ test(
       await runs.journal(scope, 'r2', claim.leaseToken).invoke('action-1', 'send', { n: 1 }, 3, dispatch);
       await anchoredApprovals.request(service, sharedClaim.leaseToken, 'approval-1', 'pay', { amount: 10 }, Date.now() + 30000);
       await anchoredDelegations.revoke(operator, 'grant', (await delegations.get(operator, 'grant')).revision);
-      await sharedCost.reserve(operator, { agentId: 'agent', runId: 'run', callId: 'call-b' }, 200);
+      await anchoredSharedCost.reserve(operator, { agentId: 'agent', runId: 'run', callId: 'call-b' }, 200);
       assert.equal(dispatches, 1);
       assert.equal((await definitions.get(actor, 'agent')).version, 2);
       assert.equal((await memory.list(actor, memoryScope)).items.length, 2);
@@ -433,6 +443,8 @@ test(
       await assert.rejects(anchoredDelegations.verify(operator, issued.grant), /Agent delegations were rolled back/);
       await assert.rejects(anchoredDelegations.get(operator, 'grant'), /Agent delegations were rolled back/);
       await assert.rejects(anchoredBudget.summary(scope), /Agent cost budget was rolled back/);
+      await assert.rejects(anchoredSharedCost.summary(operator), /Shared cost was rolled back/);
+      await assert.rejects(anchoredSharedCost.reserve(operator, { agentId: 'agent', runId: 'run', callId: 'call-c' }, 100), /Shared cost was rolled back/);
       await assert.rejects(anchoredBudget.reserve(scope, 'r2', claim.leaseToken, 'call-2', 400), /Agent cost budget was rolled back/);
       // Every store answers as if nothing happened, and nothing flags the gap.
       assert.equal((await definitions.get(actor, 'agent')).version, 1, 'the definition is back at its first version');
