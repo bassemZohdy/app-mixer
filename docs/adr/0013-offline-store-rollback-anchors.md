@@ -1,6 +1,6 @@
 # ADR 0013: Anchor the offline executions and recovery stores; leave request keys and slots unanchored
 
-Status: **Proposed** (TASK-052; accepted when the owner confirms the verdict for each store)
+Status: **Accepted**
 Date: 2026-11-27
 
 ## Context
@@ -44,9 +44,12 @@ The four stores differ in what a rewind costs:
 - After a restore, the two stores refuse (`Offline executions were rolled back`, `Offline recovery was rolled back`) until the
   anchor is reconciled. A lowered anchor is deliberate and goes through `scripts/anchor-admin.mjs`, which learns the two key kinds.
 - Re-applying what was lost has no source of truth inside the database. The operator reconciles every key that was live at the
-  restore point against the external system by its idempotency key, records the outcome through `PostgresOfflineRecovery` and
-  then lowers the anchor. An execution that cannot be verified stays uncertain.
+  restore point against the external system by its idempotency key, lowers the anchor deliberately (both stores refuse to record
+  while they are behind it) and then records the outcome through `PostgresOfflineRecovery`. An execution that cannot be verified
+  stays uncertain.
 - Every execution costs one anchor write per state change. The anchor is a file on storage a restore cannot reach.
+- The version comes from one sequence for all tenants. A write whose version was drawn just before a concurrent backup snapshot
+  but committed after it can go undetected; a write made after the backup finished cannot.
 - The check assumes a restore of the whole database. A restore of single tables is not detected.
 - The check also assumes rows are never deleted. No code here deletes from either table; an operator who prunes the newest
   rows must lower the anchor to match, or the store refuses.
