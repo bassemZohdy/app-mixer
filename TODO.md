@@ -102,7 +102,7 @@
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-036, TASK-037 · Lane: main
   - State: next: extend the restore test's table to the agent stores and read which ones rewind undetected
 
-- [ ] **TASK-052** · P2 · mid · Decide and build rollback anchors for the PostgreSQL offline stores, as TASK-047 does for the agent stores
+- [/] **TASK-052** · P2 · mid · Decide and build rollback anchors for the PostgreSQL offline stores, as TASK-047 does for the agent stores
   - Done when: an ADR under docs/adr decides whether PostgresOfflineRequestKeys, PostgresOfflineSlots, PostgresOfflineExecutions and PostgresOfflineRecovery accept an anchor (an epoch or high-water mark held outside their database, as PostgresJwtRevocations and PostgresExtensionApprovals do through file-sequence-anchor.ts) or document why they cannot; if accepted, each store refuses to answer after a restore until its anchor is reconciled, and packages/core/test/postgres-restore-rollback.test.mjs shows the refusal for each; the offline rows in docs/kubernetes-data-plane.md#restoring-an-older-backup and the P3-03 and P3-04 rollback boxes are brought in line; `APP_MIXER_TEST_POSTGRES_RESTORE=docker node --test packages/core/test/postgres-restore-rollback.test.mjs` passes
   - Links: Ref: docs/kubernetes-data-plane.md#restoring-an-older-backup · From: TASK-027 · Lane: main
-  - State: branch todo/TASK-052-decide-build-rollback-anchors from main; next: start TASK-052
+  - State: attempts 0/3; baseline 2026 passing; branch todo/TASK-052-decide-build-rollback-anchors from main; next: read docs
