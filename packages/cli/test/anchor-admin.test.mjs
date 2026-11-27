@@ -45,10 +45,12 @@ test('anchor-admin finds anchor files by key, lists, reads and raises them, and 
     assert.deepEqual(JSON.parse((await cli('key', 'offline-recovery', 'tenant', 'app')).stdout), { file: offlineRecoveryAnchorKey('tenant', 'app') + '.sequence' });
     assert.deepEqual(JSON.parse((await cli('key', 'offline-executions', 'tenant', 'app')).stdout), { file: offlineExecutionAnchorKey('tenant', 'app') + '.sequence' });
     // TASK-047.5: the agent stores' anchors are found by tenant and agent, and the files they write are the files the tool lists.
-    for (const kind of ['agent-definitions', 'agent-runs', 'agent-memory', 'agent-approvals', 'agent-delegations', 'agent-cost-budget'])
+    for (const kind of ['agent-definitions', 'agent-runs', 'agent-memory', 'agent-approvals', 'agent-delegations', 'agent-cost-budget', 'agent-shared-cost'])
       assert.deepEqual(JSON.parse((await cli('key', kind, 'tenant', 'agent')).stdout), { file: agentAnchorKey(kind, 'tenant', 'agent') + '.sequence' }, kind);
     for (const bad of [
       ['key', 'agent-runs', 'tenant'],
+      ['key', 'agent-shared-cost', 'tenant'],
+      ['key', 'agent-shared-cost', 'tenant', 'budget', 'extra'],
       ['key', 'agent-memory', 'tenant', 'agent', 'extra'],
       ['key', 'offline-recovery', 'tenant'],
       ['key', 'offline-executions', 'tenant', 'app', 'extra'],
