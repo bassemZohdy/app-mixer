@@ -90,7 +90,12 @@ export class PostgresAgentRuns {
       rolledBack: 'Agent runs were rolled back',
       onError: this.onAnchorError,
       stored: async () => {
-        const result = await this.query('SELECT COALESCE(max(version),0) AS stored FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2', [tenantId, agentId]);
+        // The runs and their actions share one version stream, so the newest version of either table is what the anchor must not exceed.
+        const result = await this.query(
+          'SELECT GREATEST((SELECT COALESCE(max(version),0) FROM app_mixer_agent_runs WHERE tenant_id=$1 AND agent_id=$2),' +
+            '(SELECT COALESCE(max(version),0) FROM app_mixer_agent_actions WHERE tenant_id=$1 AND agent_id=$2)) AS stored',
+          [tenantId, agentId]
+        );
         const stored = Number(result.rows?.[0]?.stored);
         if (!Array.isArray(result.rows) || result.rows.length !== 1 || !Number.isSafeInteger(stored) || stored < 0) throw Error('Invalid run registry result');
         return stored;
@@ -163,6 +168,8 @@ export class PostgresAgentRuns {
       await this.query('CREATE SEQUENCE IF NOT EXISTS ' + versionSequence, []);
       await this.query("ALTER TABLE app_mixer_agent_runs ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT nextval('" + versionSequence + "')", []);
       await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_runs_newest ON app_mixer_agent_runs(tenant_id,agent_id,version)', []);
+      await this.query("ALTER TABLE app_mixer_agent_actions ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT nextval('" + versionSequence + "')", []);
+      await this.query('CREATE INDEX IF NOT EXISTS app_mixer_agent_actions_newest ON app_mixer_agent_actions(tenant_id,agent_id,version)', []);
     }
     await this.query('CREATE TABLE IF NOT EXISTS app_mixer_agent_run_scopes (tenant_id TEXT NOT NULL,agent_id TEXT NOT NULL,PRIMARY KEY(tenant_id,agent_id))', []);
     await this.query(
@@ -560,7 +567,15 @@ export class PostgresAgentRuns {
   }
   /** The action journal for one leased (or, for reconciliation, uncertain) run in this registry. */
   journal(scope: AgentRunScope, runId: string, leaseToken: string): PostgresAgentActionJournal {
-    return new PostgresAgentActionJournal(this.query, this.transaction, scope, runId, leaseToken);
+    const { tenantId, agentId } = scopeKey(scope, runId);
+    return new PostgresAgentActionJournal(
+      this.query,
+      this.transaction,
+      scope,
+      runId,
+      leaseToken,
+      this.anchor ? { bump: this.bump, check: () => this.checkAnchor(tenantId, agentId), advance: row => this.advance(tenantId, agentId, row) } : undefined
+    );
   }
 }
 
@@ -572,10 +587,23 @@ export class PostgresAgentActionJournal {
     private readonly transaction: PostgresAgentRunsOptions['transaction'],
     scope: AgentRunScope,
     private readonly runId: string,
-    private readonly token: string
+    private readonly token: string,
+    private readonly anchor?: { bump: string; check: () => Promise<void>; advance: (row: Record<string, unknown> | undefined) => Promise<void> }
   ) {
     this.scope = scopeKey(scope, runId);
     if (!id(token)) throw Error('Invalid action journal configuration');
+  }
+  private async check(): Promise<void> {
+    await this.anchor?.check();
+  }
+  /** An action update; with an anchor it draws a version from the run stream in the same statement and advances the anchor. */
+  private async update(query: Query, sql: string, args: unknown[]): Promise<void> {
+    if (!this.anchor) {
+      await query(sql, args);
+      return;
+    }
+    const result = await query(sql.replace(' WHERE ', this.anchor.bump + ' WHERE ') + ' RETURNING version', args);
+    await this.anchor.advance(result.rows[0]);
   }
   private args(): [string, string, string] {
     return [this.scope.tenantId, this.scope.agentId, this.runId];
@@ -604,6 +632,7 @@ export class PostgresAgentActionJournal {
   }
   async get(actionId: string): Promise<AgentAction | undefined> {
     if (!id(actionId)) throw Error('Invalid action');
+    await this.check();
     const row = await this.row(this.query, actionId);
     return row ? this.metadata(row) : undefined;
   }
@@ -612,17 +641,22 @@ export class PostgresAgentActionJournal {
     if (!id(actionId) || !id(operationId) || !Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 20 || typeof dispatch !== 'function') throw Error('Invalid action');
     const serialized = actionJSON(input),
       hash = createHash('sha256').update(serialized).digest('hex');
+    await this.check();
     const prepared = await this.transaction(async query => {
       await this.lockRun(query, 'lease');
       let row = await this.row(query, actionId, true);
       if (!row) {
         await query("INSERT INTO app_mixer_agent_actions VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'ready',0,$9,NULL)", [...this.args(), actionId, operationId, serialized, hash, randomUUID(), maxAttempts]);
         row = (await this.row(query, actionId, true))!;
+        await this.anchor?.advance(row);
       }
       if (row.operation_id !== operationId || row.input_hash !== hash || row.input_json !== serialized || Number(row.max_attempts) !== maxAttempts) throw Error('Action identity conflict');
       if (row.status === 'succeeded') return { cached: true, result: String(row.result_json), key: String(row.idempotency_key) };
       if (row.status !== 'ready' || Number(row.attempts) >= maxAttempts) throw Error('Action requires reconciliation');
-      await query("UPDATE app_mixer_agent_actions SET status='dispatching',attempts=attempts+1 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [...this.args(), actionId]);
+      await this.update(query, "UPDATE app_mixer_agent_actions SET status='dispatching',attempts=attempts+1 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [
+        ...this.args(),
+        actionId
+      ]);
       return { cached: false, result: '', key: String(row.idempotency_key) };
     });
     if (prepared.cached) return JSON.parse(prepared.result);
@@ -632,7 +666,11 @@ export class PostgresAgentActionJournal {
         await this.lockRun(query, 'lease');
         const row = await this.row(query, actionId, true);
         if (!row || row.status !== 'dispatching') throw Error('Action state conflict');
-        await query("UPDATE app_mixer_agent_actions SET status='succeeded',result_json=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [...this.args(), actionId, result]);
+        await this.update(query, "UPDATE app_mixer_agent_actions SET status='succeeded',result_json=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [
+          ...this.args(),
+          actionId,
+          result
+        ]);
       });
       return JSON.parse(result);
     } catch (error) {
@@ -644,7 +682,7 @@ export class PostgresAgentActionJournal {
             await this.lockRun(query, 'lease');
             const row = await this.row(query, actionId, true);
             if (row?.status !== 'dispatching') return;
-            await query('UPDATE app_mixer_agent_actions SET status=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4', [
+            await this.update(query, 'UPDATE app_mixer_agent_actions SET status=$5 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4', [
               ...this.args(),
               actionId,
               Number(row.attempts) >= Number(row.max_attempts) ? 'failed' : 'ready'
@@ -659,7 +697,7 @@ export class PostgresAgentActionJournal {
           await this.lockRun(query, 'lease');
           const row = await this.row(query, actionId, true);
           if (row?.status === 'dispatching')
-            await query("UPDATE app_mixer_agent_actions SET status='uncertain' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [...this.args(), actionId]);
+            await this.update(query, "UPDATE app_mixer_agent_actions SET status='uncertain' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [...this.args(), actionId]);
         });
       } catch {}
       throw Error('Action outcome uncertain', { cause: error });
@@ -667,6 +705,7 @@ export class PostgresAgentActionJournal {
   }
   /** Actions that need a decision after the run became uncertain. */
   async unresolved(): Promise<AgentAction[]> {
+    await this.check();
     return (
       await this.query("SELECT * FROM app_mixer_agent_actions WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND status IN ('dispatching','uncertain') ORDER BY action_id", [...this.args()])
     ).rows.map(row => this.metadata(row));
@@ -674,16 +713,18 @@ export class PostgresAgentActionJournal {
   /** The host must first stop the old worker and mark its run uncertain. */
   async markUncertain(actionId: string): Promise<void> {
     if (!id(actionId)) throw Error('Invalid action');
+    await this.check();
     await this.transaction(async query => {
       await this.lockRun(query, 'uncertain');
       const row = await this.row(query, actionId, true);
       if (!row || row.status !== 'dispatching') throw new AgentError('lost_race', 'Invalid action state');
-      await query("UPDATE app_mixer_agent_actions SET status='uncertain' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [...this.args(), actionId]);
+      await this.update(query, "UPDATE app_mixer_agent_actions SET status='uncertain' WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4", [...this.args(), actionId]);
     });
   }
   /** Verify externally without replaying; a stale snapshot (another reconciliation won) is rejected. */
   async reconcileWith(actionId: string, verify: (request: ActionVerificationRequest) => Promise<ActionVerification>): Promise<ActionVerification['outcome']> {
     if (!id(actionId) || typeof verify !== 'function') throw Error('Invalid action verification');
+    await this.check();
     const snapshot = await this.transaction(async query => {
       const run = await this.lockRun(query, 'uncertain'),
         row = await this.row(query, actionId);
@@ -715,7 +756,7 @@ export class PostgresAgentActionJournal {
         throw new AgentError('lost_race', 'Action verification stale');
       if (outcome === 'not_applied' && Number(row.attempts) >= Number(row.max_attempts)) throw Error('Action attempts exhausted');
       if (outcome !== 'unknown')
-        await query('UPDATE app_mixer_agent_actions SET status=$5,result_json=$6 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4', [
+        await this.update(query, 'UPDATE app_mixer_agent_actions SET status=$5,result_json=$6 WHERE tenant_id=$1 AND agent_id=$2 AND run_id=$3 AND action_id=$4', [
           ...this.args(),
           actionId,
           outcome === 'applied' ? 'succeeded' : outcome === 'not_applied' ? 'ready' : 'failed',
