@@ -92,6 +92,7 @@ for (const action of ['forward', 'rollback'])
     } finally {
       for (const item of workers) if (item.child.exitCode === null && item.child.signalCode === null) item.child.kill('SIGKILL');
       provider?.close();
-      rmSync(dir, { recursive: true, force: true });
+      // A killed worker can hold the SQLite file for a moment on Windows, which made the unlink fail with EBUSY.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
   });
