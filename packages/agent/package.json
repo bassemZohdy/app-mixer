@@ -43,7 +43,7 @@
     "@types/node": "^26.6.7",
     "jsdom": "^31.0.1",
     "tweetnacl": "1.0.3",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@ag-ui/core": "^1.0.5",
