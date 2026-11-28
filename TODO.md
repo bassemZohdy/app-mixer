@@ -70,12 +70,12 @@
 - [ ] **TASK-036** · P2 · mid · Close the optional remote Control Plane connector evidence gaps (legacy P3-03)
   - Done when: every Still-to-prove box of P3-03 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-036 · Lane: evidence
-  - State: next: TASK-047
+  - State: next: needs the target environment (TASK-047 is drained)
 
 - [ ] **TASK-037** · P2 · mid · Close the Kubernetes production deployment evidence gaps (legacy P3-04)
   - Done when: every Still-to-prove box of P3-04 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
   - Links: Ref: docs/plans/evidence-lane.md#task-037 · Lane: evidence
-  - State: next: TASK-047
+  - State: next: needs the target environment (TASK-047 is drained)
 
 - [ ] **TASK-038** · P2 · mid · Close the service principal and delegated identity evidence gaps (legacy P3-05)
   - Done when: every Still-to-prove box of P3-05 in docs/acceptance-checklists.md is checked with attached evidence; `node --test packages/cli/test/process-files.test.mjs`
