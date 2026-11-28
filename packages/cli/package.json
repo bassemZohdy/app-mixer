@@ -28,7 +28,7 @@
     "@types/node": "^26.6.7",
     "fake-indexeddb": "^6.2.8",
     "jsdom": "^31.0.1",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@app-mixer/web": "0.1.0",
